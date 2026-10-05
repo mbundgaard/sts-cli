@@ -1,0 +1,38 @@
+# Dependencies and generated output
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+*.tgz
+
+# Credentials and private runtime state (never commit)
+.env
+.env.*
+!.env.example
+.npmrc
+StsCli.json
+StsCli.json.*
+sts-invocations.jsonl
+pat.txt
+*.pem
+*.key
+
+# Ad-hoc tenant/request/response dumps
+check-*.json
+checks*.json
+menu-*.json
+menu[0-9]*.json
+order*.json
+posted*.json
+tender[0-9]*.json
+
+# Local agent/editor metadata
+.pi-intercom/
+.pi/
+.local/
+.vs/
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.log

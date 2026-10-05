@@ -1,0 +1,40 @@
+name: Bug report
+description: Report a reproducible CLI problem using synthetic data.
+title: "[Bug]: "
+body:
+  - type: markdown
+    attributes:
+      value: "Do not include credentials, tenant/customer data, or unreviewed response bodies. Report vulnerabilities privately using SECURITY.md."
+  - type: input
+    id: version
+    attributes:
+      label: CLI and Node versions
+      description: Output of sts --version and node --version.
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: OS and architecture
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: Include a command with placeholders and synthetic JSON, not real credentials or transactions.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior and exit code
+      description: Include only reviewed, non-sensitive diagnostics.
+    validations:
+      required: true

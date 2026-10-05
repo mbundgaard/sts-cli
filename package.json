@@ -1,0 +1,31 @@
+{
+  "name": "@muneris/sts-cli",
+  "version": "0.2.0",
+  "description": "Agent-first Oracle Simphony STS Gen2 CLI with raw API responses",
+  "type": "module",
+  "license": "MIT",
+  "author": "Muneris",
+  "homepage": "https://github.com/mbundgaard/sts-cli#readme",
+  "repository": { "type": "git", "url": "git+https://github.com/mbundgaard/sts-cli.git" },
+  "bugs": { "url": "https://github.com/mbundgaard/sts-cli/issues" },
+  "keywords": ["oracle", "simphony", "sts", "cli", "pos", "typescript"],
+  "bin": { "sts": "bin/sts.js" },
+  "files": ["bin/", "dist/", "README.md", "LICENSE", "CHANGELOG.md", "CONTRIBUTING.md", "SECURITY.md", "CODE_OF_CONDUCT.md", "docs/CLI.md", "docs/AUTHENTICATION.md", "docs/MIGRATION.md", "docs/DEVELOPMENT.md"],
+  "engines": { "node": ">=22" },
+  "publishConfig": { "access": "public" },
+  "scripts": {
+    "build": "tsc",
+    "test": "npm run build && node --test tests/*.test.mjs",
+    "test:package": "npm run build && node scripts/package-smoke.mjs",
+    "prepack": "npm run build",
+    "start": "node bin/sts.js"
+  },
+  "dependencies": {
+    "commander": "^14.0.0",
+    "tough-cookie": "^6.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.9.0"
+  }
+}

@@ -1,0 +1,22 @@
+name: Feature request
+description: Propose a focused CLI or documentation improvement.
+title: "[Feature]: "
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or use case
+      description: Describe the task without real tenant/customer information.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed command or behavior
+      description: Include placeholder examples and an Oracle documentation link if relevant.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered

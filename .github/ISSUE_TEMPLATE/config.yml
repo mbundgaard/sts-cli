@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Private security report
+    url: https://github.com/mbundgaard/sts-cli/security/policy
+    about: Read the security policy before reporting a vulnerability. Do not post secrets publicly.
