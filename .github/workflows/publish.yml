@@ -1,0 +1,68 @@
+name: Publish to npm
+
+# Matches the npm trusted publisher: mbundgaard/sts-cli, publish.yml, no environment.
+# Merely pushing this workflow or a commit does not publish anything.
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: npm-publish
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    if: ${{ !github.event.release.prerelease }}
+    name: Validate Node ${{ matrix.node }} / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        node: [22, 24]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - run: npm ci
+      - run: npm test
+      - run: npm run test:package
+
+  publish:
+    name: Publish reviewed release archive
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          registry-url: https://registry.npmjs.org
+      # npm >=11.5.1 is required for trusted publishing. No dependency caches or npm tokens.
+      - run: npm install --global npm@11 --ignore-scripts
+      - name: Check release tag, version consistency and registry availability
+        id: release
+        env:
+          STS_RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: node scripts/release-check.mjs
+      - run: npm ci
+      - run: npm test
+      - run: npm run test:package
+      - run: npm pack
+      - name: Publish with short-lived GitHub OIDC authentication
+        env:
+          ARCHIVE: ${{ steps.release.outputs.archive }}
+        run: npm publish "./$ARCHIVE" --access public --provenance --ignore-scripts

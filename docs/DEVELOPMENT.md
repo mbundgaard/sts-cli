@@ -79,16 +79,49 @@ must describe the implementation, not future plans. Read CLI version from packag
 
 ## Releases
 
-Publishing is a separate, explicitly authorized action. GitHub CI does not publish and
-requires no npm credentials.
+Ordinary CI (`ci.yml`) does not publish. The separate `publish.yml` workflow runs
+only when a **stable GitHub release is published**, which is the explicit release action.
+Pushing commits/tags alone and saving a draft release do not publish to npm.
 
-1. Update `package.json` and `package-lock.json` version, and finalize the changelog.
-2. Run `npm ci`, `npm test` and `npm run test:package` on supported platforms.
-3. Run `npm pack`; review the exact archive and install-test it.
-4. Authenticate through local `npm login` or securely configured trusted publishing.
-   Never commit registry tokens or pass them in an issue/chat transcript.
-5. Verify scope ownership, version availability and release approval.
-6. Publish the reviewed archive with `npm publish <archive.tgz> --access public`.
-7. Verify registry metadata and a clean registry install. Never blindly retry an uncertain publish.
+### Trusted publishing (recommended)
+
+Configure the npm package's trusted publisher as:
+
+- Provider: GitHub Actions
+- Organization/user: `mbundgaard`
+- Repository: `sts-cli`
+- Workflow filename: `publish.yml`
+- Environment: leave blank (the workflow does not declare one)
+
+No `NPM_TOKEN` or `NODE_AUTH_TOKEN` secret is required. The Ubuntu publishing job has
+`id-token: write` and uses npm 11 with GitHub OIDC. npm requires version 11.5.1+ for
+trusted publishing. Provenance is requested on publication. Only GitHub-hosted runners
+are used. See [npm's trusted-publisher guide](https://docs.npmjs.com/trusted-publishers/).
+
+Release steps:
+
+1. Bump `package.json` and `package-lock.json` to a new stable version, update the
+   changelog, test, and push the reviewed changes. Version `0.2.0` is already published.
+2. Create a tag `v<version>` on that reviewed commit and publish its GitHub release.
+3. The workflow validates the tagged source on Windows/macOS/Linux with Node 22/24,
+   checks that the tag matches both package version fields in the lockfile, and refuses
+   a version already present on npm. Registry errors fail closed.
+4. It builds and package-tests the publishing checkout, packs it, and publishes the
+   archive with provenance using short-lived OIDC authentication.
+5. Verify registry metadata and a clean registry install. If a publish outcome is
+   uncertain, inspect the registry before re-running anything. Never blindly retry.
+
+Prereleases are deliberately skipped. Published versions are immutable. To release
+another build, bump the version; do not rerun publication for an existing version.
+Protect release tags and restrict who can publish GitHub releases. A matching workflow
+file must exist in the tagged commit. The workflow itself must still be exercised on a
+future approved release; local tests do not establish that npm's OIDC exchange works.
+
+### Manual fallback
+
+With explicit approval and local npm authentication, a reviewed archive can still be
+published using `npm publish <archive.tgz> --access public`. Keep tokens out of source
+control and chat. Remove/revoke unneeded long-lived write tokens after trusted publishing
+has been verified.
 
 See [CONTRIBUTING.md](../CONTRIBUTING.md) and [SECURITY.md](../SECURITY.md).

@@ -2,6 +2,12 @@
 
 Notable changes are documented here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+- Add a GitHub release-triggered npm trusted-publishing workflow with OIDC/provenance.
+- Validate all supported OS/Node combinations before release, require matching version
+  tags and lockfile versions, and reject already-published versions.
+
 ## 0.2.0 — 2026-10-05
 
 ### Added

@@ -45,6 +45,6 @@ Never put real tenant details, account credentials, customer data, or unreviewed
 
 ## Commit and release practices
 
-Use short, descriptive commit subjects. Maintainers handle versions, tags, and npm publishing separately. A pull request should not change the package version unless specifically requested. CI is validation-only and has no npm publication credentials.
+Use short, descriptive commit subjects. Maintainers handle versions, tags, and npm publishing separately. A pull request should not change the package version unless specifically requested. Ordinary CI is validation-only. The separate release workflow publishes through npm trusted publishing when a stable GitHub release is published; it does not store a long-lived npm token.
 
 By contributing, you agree that your contributions are licensed under this project's [MIT license](LICENSE). Please follow the [Code of Conduct](CODE_OF_CONDUCT.md).
