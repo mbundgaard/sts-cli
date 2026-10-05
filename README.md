@@ -21,13 +21,13 @@ Authentication. Explicit requests. Unchanged responses.
 - **Raw API output.** Response bodies go to stdout unchanged. Diagnostics go to stderr.
 - **No surprise retries.** Writes are explicit; duplicate detection requires a stable idempotency ID.
 
-> **Release status:** this is the first public release candidate. The npm installation commands below describe the intended distribution; until it is published, use a local package or build from source. Native macOS/Linux validation and live write testing are still required before declaring the release fully validated.
+> **Early release:** automated tests and installed-package checks pass on Windows, macOS, and Linux with Node 22 and 24. Live token refresh, reads, and calculation have been verified. Live posting, duplicate replay, and autofire still need validation; review and test your integration before production use.
 
 ## Getting started
 
 ### Install
 
-Once published:
+From npm:
 
 ```sh
 npm install --global @muneris/sts-cli

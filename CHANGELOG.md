@@ -2,7 +2,7 @@
 
 Notable changes are documented here. Versions follow [Semantic Versioning](https://semver.org/).
 
-## Unreleased — 0.2.0 candidate
+## 0.2.0 — 2026-10-05
 
 ### Added
 
@@ -31,7 +31,7 @@ Notable changes are documented here. Versions follow [Semantic Versioning](https
 
 ### Validation status
 
-Offline tests and local Windows package installation are verified. Live token refresh,
-location-scoped reads and calculator requests have been exercised. Fresh Oracle login
-was tested against mocks; live posting, duplicate replay, autofire, and native macOS/Linux
-execution still need validation. This candidate has not been published by this cleanup.
+All 44 tests and installed-package checks pass in GitHub CI on Windows, macOS and
+Linux with Node 22 and 24. Live token refresh, location-scoped reads and calculator
+requests have been exercised. Fresh Oracle login was tested against mocks; live posting,
+duplicate replay and autofire still need validation.

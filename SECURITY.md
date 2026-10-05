@@ -8,7 +8,7 @@ Include the affected version, platform/Node version, a minimal synthetic reprodu
 
 ## Supported versions
 
-The project is preparing its first public release. Security fixes will target the latest release; there is no commitment to backport fixes to older versions or the retired .NET implementation.
+Security fixes target the latest release. There is no commitment to backport fixes to older versions or the retired .NET implementation.
 
 ## Security boundaries
 
