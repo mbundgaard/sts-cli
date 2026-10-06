@@ -50,15 +50,21 @@ export class StateStore {
   }
   async save(state: State): Promise<void> {
     const temp = `${this.file}.${randomUUID()}.tmp`;
+    let complete = false;
     try {
       await mkdir(this.directory, { recursive: true, mode: 0o700 });
       const handle = await open(temp, 'wx', 0o600);
-      try { await handle.writeFile(JSON.stringify(state, null, 2) + '\n'); await handle.sync(); }
+      try { await handle.writeFile(JSON.stringify(state, null, 2) + '\n'); await handle.sync(); complete = true; }
       finally { await handle.close(); }
       await rename(temp, this.file);
     } catch (e) {
-      throw new CliError(Exit.state, `Cannot save state at ${this.file}: ${(e as Error).message}`);
-    } finally { await unlink(temp).catch(() => {}); }
+      throw new CliError(Exit.state, `Cannot save state at ${this.file}: ${(e as Error).message}`,
+        complete ? `A complete recovery copy is saved at ${temp}. It may contain rotated tokens; do not retry login/refresh with the old state. Fix the filesystem problem, then run sts auth restore --file "${temp}" --force. Keep this file private and delete it after verifying recovery.` : undefined);
+    } finally {
+      // Never discard a fully written replacement after a failed rename: Oracle
+      // may already have invalidated the refresh token in the previous state.
+      if (!complete) await unlink(temp).catch(() => {});
+    }
   }
   // Serialize mutations so two processes cannot rotate the same refresh token concurrently.
   // Locks are never stolen automatically: after an interrupted process the operator must inspect.

@@ -50,6 +50,20 @@ sts auth refresh
 
 Status is a local presence/expiry check, not server-side token validation. Show returns configuration and token presence, not full token values. Refresh saves rotated tokens atomically; if Oracle omits a replacement refresh token, the saved one is retained.
 
+### Recovering a failed state replacement
+
+If a fully written/synced state file cannot replace the saved file, the CLI exits `12`
+and retains the private `.tmp` recovery copy. The error gives its exact path and a
+`sts auth restore --file "<reported-recovery-path>" --force` command. The previous
+state remains in place, but its refresh token may already be invalid.
+
+Do **not** retry login/refresh with that old state. Resolve the filesystem/permission
+problem first, then restore the exact copy reported by the failed operation. Do not
+blindly select an older recovery file. Verify with `auth status` and an authorized
+read, then delete the recovery copy. It contains credentials: never paste it into chat,
+attach it to issues, or commit it. Incomplete/unsynced temporary files are removed;
+failed writes before a complete synced copy exists cannot guarantee token recovery.
+
 Refresh is explicit. API commands never automatically refresh or retry. Expired tokens produce exit `9`; missing tokens produce exit `8`. A rejected refresh normally requires a fresh login. An expired Oracle password must be changed through Oracle before login can finish.
 
 `sts auth logout` removes local tokens. It does not revoke them at Oracle.
@@ -100,7 +114,7 @@ Back up state using protected filesystem or secret-storage tools. There is no co
 - **401 / expired token:** run `auth refresh`; if rejected, log in again.
 - **403:** check resource permissions, IDs, and selected environment. STS's raw error body is on stdout.
 - **503:** the property may not be connected to the selected STS hub.
-- **TLS errors:** cloud and IDM validate certificates. For a trusted on-prem deployment only, `--local-sts-ip` explicitly allows a self-signed certificate for that STS request.
+- **TLS errors:** certificate verification is enabled by default. Repair the certificate/trusted CA first. For a trusted HTTPS STS endpoint, the explicit per-call `--insecure` option is available only after the agent obtains the user's confirmation for that endpoint; optionally combine it with `--sts-url <url>`. Do not automatically add it after a connection failure. Known Oracle cloud domains and the configured IDM host cannot use this bypass. Auth login/refresh always verify HTTPS certificates.
 - **Proxy requirements:** HTTP(S) proxy environment variables are not supported in this initial release.
 - **State errors:** verify directory permissions, file validity and stale locks; see exit `12` diagnostics.
 

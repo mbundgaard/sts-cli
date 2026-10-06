@@ -1,18 +1,22 @@
 import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { type Endpoint } from './endpoints.js';
+import { parseJson, isRawJson } from './json.js';
 import { CliError, Exit } from './output.js';
 import { type State, tokenSummary } from './state.js';
 import { validateUrl, type HttpRequest } from './transport.js';
 
 export interface Options {
   location?: string; rvc?: number; employee?: number; orderType?: number; employeeId?: number;
-  menuId?: string; offset?: number; limit?: number; localStsIp?: string; body?: string;
+  menuId?: string; offset?: number; limit?: number; stsUrl?: string; insecure?: boolean; body?: string;
   dryRun?: boolean; quiet?: boolean; timeout?: number; idempotencyId?: string;
   chargedTip?: number; pickupTime?: string; includeClosed?: boolean; checkNumber?: string;
   sinceTime?: string; table?: string; printed?: boolean;
 }
-export interface BuiltRequest extends HttpRequest { target: 'cloud' | 'local' }
+export interface BuiltRequest extends HttpRequest {
+  target: 'saved' | 'override';
+  insecureAllowed: boolean;
+}
 export function integer(value: string): number {
   if (!/^\d+$/.test(value) || !Number.isSafeInteger(Number(value))) throw new CliError(Exit.usage, `Expected a non-negative integer: ${value}`);
   return Number(value);
@@ -25,24 +29,45 @@ export function required(options: Options, keys: (keyof Options)[]) {
   const missing = keys.filter(k => options[k] === undefined || options[k] === '');
   if (missing.length) throw new CliError(Exit.usage, `Required: ${missing.map(k => '--' + k.replace(/[A-Z]/g, c => '-' + c.toLowerCase())).join(', ')}`);
 }
-export function normalizeLocal(value: string): string {
-  const explicitScheme = value.includes('://');
-  const url = validateUrl(explicitScheme ? value : `https://${value}`);
-  if (!explicitScheme && !url.port) url.port = '5443';
-  return url.toString().replace(/\/$/, '');
+export function validateStsUrl(value: string): URL {
+  if (value !== value.trim() || !/^https?:\/\//i.test(value)) throw new CliError(Exit.usage, 'STS URL must be an explicit http:// or https:// URL without surrounding whitespace');
+  const url = validateUrl(value);
+  if (value.includes('?') || value.includes('#')) throw new CliError(Exit.usage, 'STS base URL must not contain a query string or fragment');
+  return url;
+}
+function canUseInsecure(url: URL, state: State): boolean {
+  if (url.protocol !== 'https:') return false;
+  const hostname = url.hostname.toLowerCase().replace(/\.$/, '');
+  const oracleDomains = ['oraclecloud.com', 'oraclemicros.com', 'oraclerestaurants.com', 'oracleindustry.com'];
+  if (oracleDomains.some(domain => hostname === domain || hostname.endsWith('.' + domain))) return false;
+  if (state.auth.authUrl) {
+    try {
+      if (hostname === validateUrl(state.auth.authUrl).hostname.toLowerCase().replace(/\.$/, '')) return false;
+    } catch {
+      // An invalid IDM URL cannot establish that this host is safe to bypass.
+      return false;
+    }
+  }
+  return true;
 }
 export function baseRequest(state: State, options: Options, apiPath: string, headers: Record<string, string> = {}): BuiltRequest {
   if (!state.auth.orgName) throw new CliError(Exit.notConfigured, 'Organization not configured; run sts auth config');
-  const base = options.localStsIp ? normalizeLocal(options.localStsIp) : state.auth.stsUrl;
-  if (!base) throw new CliError(Exit.notConfigured, 'STS URL not configured; run sts auth config');
-  validateUrl(base);
+  const base = options.stsUrl ?? state.auth.stsUrl;
+  if (base === undefined) throw new CliError(Exit.notConfigured, 'STS URL not configured; supply --sts-url or run sts auth config');
+  const url = validateStsUrl(base);
+  const insecureAllowed = canUseInsecure(url, state);
+  if (options.insecure && !insecureAllowed) {
+    throw new CliError(Exit.usage, url.protocol !== 'https:'
+      ? '--insecure requires an HTTPS STS URL'
+      : '--insecure cannot disable TLS verification for Oracle cloud or the configured IDM host; IDM configuration must also be valid');
+  }
   if (!options.dryRun) {
     if (!state.tokens?.accessToken) throw new CliError(Exit.noTokens, 'No access token saved; run sts auth login');
     if (tokenSummary(state.tokens).expired) throw new CliError(Exit.auth, 'Access token expired; run sts auth refresh');
   }
-  return { method: 'GET', url: `${base.replace(/\/$/, '')}/${apiPath.replace(/^\//, '')}`,
+  return { method: 'GET', url: `${base.replace(/\/+$/, '')}/${apiPath.replace(/^\//, '')}`,
     headers: { Accept: 'application/json', ...(!options.dryRun ? { Authorization: `Bearer ${state.tokens!.accessToken}` } : {}), ...headers },
-    target: options.localStsIp ? 'local' : 'cloud', insecure: !!options.localStsIp,
+    target: options.stsUrl !== undefined ? 'override' : 'saved', insecure: options.insecure === true, insecureAllowed,
     timeoutMs: (options.timeout ?? 30) * 1000 };
 }
 export function simHeaders(state: State, options: Options): Record<string, string> {
@@ -107,8 +132,8 @@ export async function readBody(input?: string): Promise<Record<string, unknown>>
     catch { throw new CliError(Exit.usage, 'Could not read --body file'); }
   }
   try {
-    const value: unknown = JSON.parse(raw.replace(/^\uFEFF/, ''));
-    if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error();
+    const value = parseJson(raw.replace(/^\uFEFF/, ''));
+    if (!value || typeof value !== 'object' || Array.isArray(value) || isRawJson(value)) throw new Error();
     return value as Record<string, unknown>;
   } catch { throw new CliError(Exit.usage, '--body must be a JSON object'); }
 }
@@ -122,8 +147,9 @@ export function buildCheckWrite(verb: 'new' | 'add' | 'calculate' | 'delete', ch
   const req = baseRequest(state, options, apiPath, simHeaders(state, options));
   req.method = verb === 'delete' ? 'DELETE' : 'POST';
   if (verb === 'delete') return req;
-  const root = structuredClone(input);
-  if (root.header !== undefined && (!root.header || typeof root.header !== 'object' || Array.isArray(root.header))) throw new CliError(Exit.usage, 'header must be a JSON object');
+  // A JSON round-trip preserves raw numeric values; structuredClone loses their brand.
+  const root = parseJson(JSON.stringify(input)) as Record<string, unknown>;
+  if (root.header !== undefined && (!root.header || typeof root.header !== 'object' || Array.isArray(root.header) || isRawJson(root.header))) throw new CliError(Exit.usage, 'header must be a JSON object');
   const header = (root.header ?? {}) as Record<string, unknown>;
   let id = randomUUID().replaceAll('-', '');
   if (options.idempotencyId !== undefined) {
@@ -140,7 +166,7 @@ export function buildCheckWrite(verb: 'new' | 'add' | 'calculate' | 'delete', ch
     header.pickupTime = options.pickupTime;
   }
   if (options.chargedTip !== undefined) {
-    if (!Array.isArray(root.tenders) || root.tenders.length !== 1 || !root.tenders[0] || typeof root.tenders[0] !== 'object' || Array.isArray(root.tenders[0])) {
+    if (!Array.isArray(root.tenders) || root.tenders.length !== 1 || !root.tenders[0] || typeof root.tenders[0] !== 'object' || Array.isArray(root.tenders[0]) || isRawJson(root.tenders[0])) {
       throw new CliError(Exit.usage, '--charged-tip requires exactly one tender object');
     }
     root.tenders[0].chargedTipTotal = options.chargedTip;

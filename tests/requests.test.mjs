@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { endpoints } from '../dist/endpoints.js';
-import { buildRead, buildCheckRead, buildCheckWrite, normalizeLocal } from '../dist/requests.js';
+import { buildRead, buildCheckRead, buildCheckWrite, validateStsUrl } from '../dist/requests.js';
 import { examples } from '../dist/examples.js';
 const state = { auth: { orgName: 'example-org', stsUrl: 'https://example.invalid' }, tokens: { accessToken: 'test-token' } };
 const options = { location: 'example-loc', rvc: 1, employeeId: 5, employee: 3, orderType: 1 };
@@ -26,15 +26,41 @@ for (const endpoint of endpoints) {
     }
   });
 }
-test('local TLS bypass is per request, not saved; explicit ports and IPv6 preserved', () => {
-  assert.equal(normalizeLocal('127.0.0.1'), 'https://127.0.0.1:5443');
-  assert.equal(normalizeLocal('[::1]'), 'https://[::1]:5443');
-  assert.equal(normalizeLocal('https://example.invalid'), 'https://example.invalid');
-  assert.equal(normalizeLocal('http://example.invalid:123'), 'http://example.invalid:123');
+test('per-call STS URL preserves explicit ports, IPv6 and base paths without saving', () => {
   const def = endpoints.find(e => e.noun === 'tender');
-  assert.equal(buildRead(def, state, { ...options, localStsIp: '127.0.0.1' }).insecure, true);
+  const before = structuredClone(state);
+  for (const base of ['https://pos.example:443', 'https://pos.example:5443', 'http://pos.example:80', 'https://[::1]:443/gateway', 'https://pos.example/gateway']) {
+    const req = buildRead(def, state, { ...options, stsUrl: base });
+    assert.ok(req.url.startsWith(base + '/api/v1/tenders/collection?'), req.url);
+    assert.equal(req.target, 'override');
+    assert.equal(req.insecure, false);
+  }
+  const saved = buildRead(def, state, options);
+  assert.ok(saved.url.startsWith(state.auth.stsUrl));
+  assert.equal(saved.target, 'saved');
+  assert.equal(saved.insecure, false);
+  assert.deepEqual(state, before);
+});
+test('insecure is explicit, per call, and works with a saved or overridden HTTPS STS URL', () => {
+  const def = endpoints.find(e => e.noun === 'tender');
+  assert.equal(buildRead(def, state, { ...options, stsUrl: 'https://pos.example:5443', insecure: true }).insecure, true);
+  assert.equal(buildRead(def, state, { ...options, insecure: true }).insecure, true);
   assert.equal(buildRead(def, state, options).insecure, false);
-  assert.equal(state.auth.stsUrl, 'https://example.invalid');
+  assert.throws(() => buildRead(def, state, { ...options, stsUrl: 'http://pos.example', insecure: true }), /HTTPS/);
+});
+test('insecure cannot disable verification for known Oracle cloud or the configured IDM', () => {
+  const def = endpoints.find(e => e.noun === 'tender');
+  const configured = { ...state, auth: { ...state.auth, authUrl: 'https://idm.example' } };
+  for (const base of ['https://mte5-sts.oraclemicros.com', 'https://mte4-sts.oraclecloud.com', 'https://example.oracleindustry.com', 'https://example.oraclerestaurants.com', 'https://idm.example:5443', 'https://MTE5-STS.ORACLEMICROS.COM.']) {
+    assert.throws(() => buildRead(def, configured, { ...options, stsUrl: base, insecure: true }), /Oracle cloud|IDM/);
+    assert.equal(buildRead(def, configured, { ...options, stsUrl: base }).insecure, false);
+  }
+});
+test('STS URL requires an absolute base URL without credentials, queries or fragments', () => {
+  for (const invalid of ['', 'pos.example', 'pos.example:443', 'https:pos.example', 'ftp://pos.example', 'https://user:pass@pos.example', 'https://pos.example?x=1', 'https://pos.example#', ' https://pos.example']) {
+    assert.throws(() => validateStsUrl(invalid), undefined, invalid);
+  }
+  assert.equal(validateStsUrl('https://pos.example').protocol, 'https:');
 });
 test('check filters encode free text; dates expand to midnight UTC', () => {
   const req = buildCheckRead('list', undefined, state, { ...options, includeClosed: true, checkNumber: '12, 34', table: 'A & B', sinceTime: '2026-01-01' });

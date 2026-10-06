@@ -36,9 +36,12 @@ Generated `dist/`, `node_modules/`, and package archives are ignored. `StsCli.js
 | `state.ts` | State paths, validation, compatibility, locked atomic saves |
 | `endpoints.ts` | Declarative read endpoint catalog |
 | `requests.ts` | Input validation and request construction |
+| `json.ts` | Node 22+ source-aware request JSON parsing; preserve numeric precision, never parse STS responses |
 | `transport.ts` | HTTP(S), compression decoding, raw body transport |
 | `examples.ts` | Minimal structured request templates |
 | `output.ts` | Local JSON results, errors and exit codes |
+| `diagnostics.ts` | Certificate-failure guidance, explicit user-confirmation requirement, write-uncertainty hints |
+| `feedback.ts` | Separate unauthenticated feedback service, private outbox/history, local opt-in reminders and agent guidance |
 
 Keep STS response JSON parsing out of the transport/execution path. Test Buffer equality,
 not just parsed JSON equivalence: whitespace, numeric representations and trailing
@@ -66,6 +69,20 @@ The initial port checked endpoint paths, methods and addressing against Oracle's
 published specification. IDM authentication endpoints are not part of that STS Swagger;
 the PKCE implementation follows the previously tested client flow. Fresh mocked login
 and real token refresh are separate forms of validation.
+
+## Feedback testing
+
+Feedback uses its own locked state beneath the profile's `feedback/` directory;
+reminder counts must never rewrite auth state or change raw STS output/exit codes.
+Use local HTTP mocks with synthetic content only. Tests cover 204 without parsing,
+400/413/503/unexpected statuses, redirects, timeout uncertainty, identical-content
+and concurrent-submit guards, exact body/ID/destination reuse, private recovery,
+UTF-8/code-unit limits, reminders and agent consent guidance. The installed-package
+smoke test exercises feedback status and preview without a network request.
+
+Do not run the production feedback smoke POST without explicit approval: every
+accepted POST creates a real row. Health is liveness only, not storage validation.
+Free-form messages are user-approved input, not automatically collected diagnostics.
 
 ## Packaging
 

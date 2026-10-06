@@ -2,13 +2,41 @@
 
 Notable changes are documented here. Versions follow [Semantic Versioning](https://semver.org/).
 
-## Unreleased
+## 0.3.0 - 2026-10-06
+
+- Add `feedback` commands for approved messages/1-5 ratings, local previews,
+  delivery history/retry/discard, configurable service URL (default
+  `https://feedback.muneris.cloud/`) and liveness checks.
+  No STS credentials/data collection, automatic sends, redirects or retries.
+- Add opt-in local reminders after 7 days or 25 recorded successful STS calls,
+  with a 30-day post-question cooldown, snooze/disable, and agent guidance for
+  optional sanitized reports of suspected bugs or recurring confusion.
+- Persist feedback before POST, block accidental identical/concurrent submissions,
+  and retain failed content/IDs; explicit retries warn about server-side duplicates.
+
+- Retain complete synced state recovery files after a failed replacement, with
+  explicit recovery instructions so rotated refresh tokens are not discarded.
+- Preserve request-body numeric precision in outgoing requests and dry-run previews.
+- Skip decompression for bodyless HEAD, 204 and 304 responses without weakening
+  validation of encoded GET bodies.
+- Clarify property-local pickup timestamps, business-level tip verification and
+  a scoped first-user pilot checklist.
+
+- **Breaking:** replace `--local-sts-ip` with an explicit per-call `--sts-url`.
+  Remove local/cloud routing and implicit port 5443; retain caller-supplied ports
+  and base paths. Use the saved URL when no override is supplied.
+- Add a separate `--insecure` opt-in for trusted HTTPS STS endpoints, refused for
+  known Oracle cloud domains and the configured IDM host. No automatic TLS bypass.
+- Document endpoint selection and TLS behavior in every API command's help.
+- Certificate-validation failures explain certificate/CA repair first and mention
+  `--insecure` only for eligible endpoints, requiring explicit user confirmation.
+  Other connection failures do not suggest bypass; no automatic retry or downgrade.
 
 - Add a GitHub release-triggered npm trusted-publishing workflow with OIDC/provenance.
 - Validate all supported OS/Node combinations before release, require matching version
   tags and lockfile versions, and reject already-published versions.
 
-## 0.2.0 — 2026-10-05
+## 0.2.0 - 2026-10-05
 
 ### Added
 

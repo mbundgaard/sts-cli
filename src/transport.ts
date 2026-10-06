@@ -22,7 +22,7 @@ export function validateUrl(input: string): URL {
 export async function request(input: HttpRequest): Promise<HttpResponse> {
   const url = validateUrl(input.url);
   return new Promise((resolve, reject) => {
-    const headers = { 'User-Agent': 'StsCli-TypeScript/0.2', 'Accept-Encoding': 'identity', ...input.headers };
+    const headers = { 'User-Agent': 'StsCli-TypeScript/0.3', 'Accept-Encoding': 'identity', ...input.headers };
     const client = url.protocol === 'https:' ? https : http;
     const req = client.request(url, { method: input.method, headers, rejectUnauthorized: !input.insecure }, res => {
       const chunks: Buffer[] = [];
@@ -33,7 +33,11 @@ export async function request(input: HttpRequest): Promise<HttpResponse> {
         try {
           let body = Buffer.concat(chunks);
           const encoding = res.headers['content-encoding']?.toLowerCase();
-          if (encoding === 'gzip') body = gunzipSync(body);
+          // HEAD/204/304 have no message body. Their encoding headers describe
+          // a representation, not bytes available for decompression here.
+          const noBody = input.method.toUpperCase() === 'HEAD' || res.statusCode === 204 || res.statusCode === 304;
+          if (noBody) body = Buffer.alloc(0);
+          else if (encoding === 'gzip') body = gunzipSync(body);
           else if (encoding === 'deflate') body = inflateSync(body);
           else if (encoding === 'br') body = brotliDecompressSync(body);
           else if (encoding && encoding !== 'identity') throw new Error(`Unsupported content encoding: ${encoding}`);

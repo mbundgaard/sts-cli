@@ -56,9 +56,36 @@ Exit codes: 0 success, 1 unexpected local failure, 6 usage, 7 not configured,
   verifies business outcomes; HTTP 200 alone is not proof a tip was applied.
 - Every STS call needs Bearer authorization and Accept: application/json.
 - Preserve path, query and Simphony-header addressing conventions.
-- --local-sts-ip is per-call only; TLS bypass never applies to cloud/IDM.
+- --sts-url overrides the saved URL for one call; never infer scheme or port.
+  --insecure is a separate, explicit per-call flag. Obtain explicit user confirmation
+  for the endpoint before adding it; never downgrade TLS or retry automatically.
+  Reject it for known Oracle cloud/IDM hosts; auth login/refresh always verify HTTPS certificates.
+  --local-sts-ip is removed, with no compatibility alias.
 - Corrupt state must be reported, not silently reset. Lock auth mutations and
   persist rotated tokens atomically. Other clients may not honor the lock.
+
+## Optional feedback
+
+- `sts feedback status` is a local JSON command with reminder eligibility and
+  agent guidance. Feedback is a separate service, never an STS request: do not
+  attach Bearer authorization, cookies, Simphony headers, or STS state.
+- Ask before submitting any message/rating. Show a sanitized proposed summary
+  and use `feedback submit --dry-run` if useful. Explicit submission is consent
+  from the caller; the CLI does not prompt for human confirmation itself.
+- Offer suspected CLI bugs or recurring agent mistakes/confusion as optional
+  reports even when no scheduled reminder is due. Distinguish verified defects
+  from suspicions, POS configuration issues and agent misunderstandings. Do not
+  interrupt urgent work, automatically report failures or repeat declined offers.
+- Once you ask, use `feedback asked`; respect skip, `feedback snooze`, and
+  `feedback config --reminders off`. Reminders are opt-in, with only local counts
+  and timestamps. Noninteractive clients check status instead of receiving nags.
+- Send only approved text/rating and product metadata. Never include credentials,
+  customer data, private tenant identifiers or raw request/response/console dumps.
+- POST success is 204 with no JSON body. Health proves liveness, not storage.
+  Never retry automatically. `feedback retry <id>` preserves the original body,
+  ID and destination, but the server does not deduplicate and may create a new row.
+- Test with local synthetic mocks. A production feedback smoke POST creates a
+  real row and needs separate approval.
 
 ## Documentation and packaging
 

@@ -24,6 +24,24 @@
 9. **HEAD output is empty.** Connection headers are diagnostic stderr, not a fabricated response body. HTTP non-2xx uses API exit status.
 10. **State errors use exit 12.** Auth mutations are serialized by a lock file and saved with a temporary-file rename. A legacy process does not participate in this lock.
 
+## Endpoint options after 0.2.0
+
+`--local-sts-ip` has been removed. Replace it with an explicit per-call `--sts-url`:
+
+```sh
+sts check list --location <loc> --rvc <rvc> --sts-url https://pos.example:5443
+```
+
+No local routing, automatic port 5443, or automatic TLS bypass remains. An explicit
+port is retained; omitted ports use the standard HTTPS 443 / HTTP 80. Base paths are
+preserved and API paths appended. For a trusted self-signed HTTPS STS host, add the
+separate `--insecure` flag. It is refused for known Oracle cloud domains and the
+configured IDM host; login/refresh are never affected.
+
+Neither flag is saved. Without `--sts-url`, the saved STS URL is used. The separate
+`auth config --sts-url` command still saves a default. Dry-run `target` now reads
+`saved` or `override` instead of `cloud` or `local`.
+
 ## Safe state transition
 
 Stop other processes that might refresh the old token. Choose one method:

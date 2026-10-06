@@ -1,6 +1,6 @@
 {
   "name": "@muneris/sts-cli",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Agent-first Oracle Simphony STS Gen2 CLI with raw API responses",
   "type": "module",
   "license": "MIT",

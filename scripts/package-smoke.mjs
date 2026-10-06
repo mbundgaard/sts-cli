@@ -21,7 +21,7 @@ try {
   const shim = path.join(temp, 'node_modules', '.bin', process.platform === 'win32' ? 'sts.cmd' : 'sts');
   // Exercise npm's actual shim, including its Unix executable-permission handling.
   const execute = args => {
-    const options = { encoding: 'utf8', env: { ...process.env, STS_HOME: path.join(temp, 'state') } };
+    const options = { encoding: 'utf8', env: { ...process.env, STS_HOME: path.join(temp, 'state'), STS_FEEDBACK_URL: 'https://feedback.example.invalid/' } };
     // Arguments here are fixed test literals, never user input.
     return process.platform === 'win32'
       ? spawnSync(`"${shim}" ${args.join(' ')}`, { ...options, shell: true })
@@ -32,7 +32,13 @@ try {
   const status = execute(['auth', 'status']);
   assert.equal(status.status, 0, status.stderr);
   assert.equal(JSON.parse(status.stdout).data.state, 'no-tokens');
+  const feedback = execute(['feedback', 'status']);
+  assert.equal(feedback.status, 0, feedback.stderr);
+  assert.equal(JSON.parse(feedback.stdout).data.remindersEnabled, false);
+  const preview = execute(['feedback', 'submit', '--rating', '5', '--dry-run']);
+  assert.equal(preview.status, 0, preview.stderr);
+  assert.equal(JSON.parse(preview.stdout).data.payload.product, pkg.name);
   const failure = execute(['tender', 'list', '--rvc', '1']);
   assert.equal(failure.status, 6); assert.equal(failure.stdout, '');
-  console.log(`Package ${packed.filename}: ${packed.files.length} allowlisted files, installed sts shim/version/state/exit code verified.`);
+  console.log(`Package ${packed.filename}: ${packed.files.length} allowlisted files, installed sts shim/version/state/feedback preview/exit code verified.`);
 } finally { rmSync(temp, { recursive: true, force: true }); }

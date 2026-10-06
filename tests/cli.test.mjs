@@ -39,6 +39,61 @@ for (const [status, body] of [[200, Buffer.from('{ "unknown" : [1,2], "number":9
     assert.match(result.stderr, new RegExp(`HTTP ${status}`));
   });
 }
+test('request numbers survive inline, file, stdin and dry-run without rounding', async t => {
+  const numericFields = '"large":9007199254740993,"nested":[-9007199254740993,1.234567890123456789,1e400,-0,1.00]';
+  const body = '{' + numericFields + ',"header":{"guestCount":9007199254740993},"rawJSON":"not a raw value","tenders":[{"tenderId":123,"total":84}]}';
+  const received = [];
+  const s = await setup(t, async (req, res) => {
+    const chunks = []; for await (const chunk of req) chunks.push(chunk);
+    received.push(Buffer.concat(chunks).toString()); res.end('{}');
+  });
+  const file = path.join(s.directory, 'request.json');
+  await writeFile(file, '\uFEFF' + body);
+  const args = ['check','new','--location','test-loc','--rvc','1','--employee','3','--order-type','5','--charged-tip','10'];
+  for (const input of [body, file, '-']) {
+    const result = await s.run([...args, '--body', input], input === '-' ? body : '');
+    assert.equal(result.code, 0, result.stderr);
+    const sent = received.at(-1);
+    assert.ok(sent.includes(numericFields));
+    assert.match(sent, /"guestCount":9007199254740993/);
+    assert.match(sent, /"rawJSON":"not a raw value"/);
+    assert.match(sent, /"total":84,"chargedTipTotal":10/);
+  }
+  const preview = await s.run([...args, '--body', body, '--dry-run']);
+  assert.equal(preview.code, 0, preview.stderr);
+  assert.equal(received.length, 3);
+  assert.match(preview.stdout.toString(), /"large": 9007199254740993/);
+  assert.match(preview.stdout.toString(), /1\.234567890123456789/);
+  assert.match(preview.stdout.toString(), /1e400/);
+});
+test('raw number preservation does not let numbers masquerade as request objects', async t => {
+  let calls = 0;
+  const s = await setup(t, (_, res) => { calls++; res.end(); });
+  for (const body of ['9007199254740993', '{"header":9007199254740993}', '{"tenders":[9007199254740993]}']) {
+    const result = await s.run(['check','new','--location','test-loc','--rvc','1','--employee','3','--order-type','5','--charged-tip','10','--body','-'], body);
+    assert.equal(result.code, 6, result.stderr);
+    assert.equal(result.stdout.length, 0);
+  }
+  assert.equal(calls, 0);
+});
+test('write help explains local pickup time and business-level tip verification', async t => {
+  const s = await setup(t, () => { throw new Error('Help must not contact network'); });
+  for (const verb of ['new', 'add']) {
+    const result = await s.run(['check', verb, '--help']);
+    assert.equal(result.code, 0);
+    const help = result.stdout.toString().replace(/\s+/g, ' ');
+    assert.match(help, /property-local wall time/);
+    assert.match(help, /responses use UTC/);
+    assert.match(help, /HTTP 200 does not prove a tip applied/);
+  }
+});
+test('compressed HEAD metadata still produces empty stdout and connection diagnostics', async t => {
+  const s = await setup(t, (_, res) => { res.writeHead(200, { 'Content-Encoding': 'gzip', 'Content-Length': '123', 'Simphony-POS-Connected': 'true' }); res.end(); });
+  const result = await s.run(['connection','status','--location','test-loc','--rvc','1']);
+  assert.equal(result.code, 0, result.stderr);
+  assert.equal(result.stdout.length, 0);
+  assert.match(result.stderr, /Simphony-POS-Connected: true/);
+});
 test('gzip body is decoded without parsing or adding newline', async t => {
   const body = Buffer.from('{ "test":1}');
   const s = await setup(t, (_, res) => { res.writeHead(200, { 'Content-Encoding': 'gzip' }); res.end(gzipSync(body)); });
@@ -190,6 +245,54 @@ test('interrupted HTTP response does not print partial bytes', async t => {
   });
   const result = await s.run(['location','get','--location','test-loc']);
   assert.equal(result.code, 10); assert.equal(result.stdout.length, 0);
+});
+test('CLI override targets one call and does not change saved state', async t => {
+  let calls = 0;
+  const s = await setup(t, (req, res) => {
+    calls++; assert.equal(req.url, '/gateway/api/v1/checks');
+    assert.equal(req.headers.authorization, 'Bearer test-access'); res.end('override-response');
+  });
+  const state = await s.store.load();
+  delete state.auth.stsUrl; // A per-call URL also works without a saved default.
+  await s.store.save(state);
+  const before = await readFile(s.store.file);
+  const result = await s.run(['check', 'list', '--location', 'test-loc', '--rvc', '1', '--sts-url', s.base + '/gateway']);
+  assert.equal(result.code, 0, result.stderr);
+  assert.equal(result.stdout.toString(), 'override-response'); assert.equal(calls, 1);
+  assert.deepEqual(await readFile(s.store.file), before);
+  assert.equal((await s.run(['check', 'list', '--location', 'test-loc', '--rvc', '1'])).code, 7);
+  assert.equal(calls, 1);
+});
+test('API help documents STS URL/insecure and removed shorthand fails without network', async t => {
+  let calls = 0;
+  const s = await setup(t, (_, res) => { calls++; res.end(); });
+  for (const args of [['menu', 'get'], ['check', 'new'], ['connection', 'status']]) {
+    const help = await s.run([...args, '--help']);
+    assert.equal(help.code, 0);
+    assert.match(help.stdout.toString(), /--sts-url/);
+    assert.match(help.stdout.toString(), /--insecure/);
+    assert.match(help.stdout.toString(), /HTTPS 443 \/ HTTP 80/);
+    assert.match(help.stdout.toString(), /saved Bearer token/);
+    assert.match(help.stdout.toString(), /obtain explicit user confirmation/);
+    assert.match(help.stdout.toString(), /never automatically retry with --insecure/);
+  }
+  const base = ['check', 'list', '--location', 'test-loc', '--rvc', '1'];
+  assert.equal((await s.run([...base, '--local-sts-ip', '127.0.0.1'])).code, 6);
+  assert.equal((await s.run([...base, '--sts-url', 'pos.example:443'])).code, 6);
+  assert.equal((await s.run([...base, '--sts-url', 'https://mte5-sts.oraclemicros.com', '--insecure'])).code, 6);
+  assert.equal((await s.run(['auth', 'refresh', '--insecure'])).code, 6);
+  assert.equal(calls, 0);
+});
+test('dry-run shows explicit TLS choice and preserves URL port without persisting', async t => {
+  let calls = 0;
+  const s = await setup(t, (_, res) => { calls++; res.end(); });
+  const before = await readFile(s.store.file);
+  const result = await s.run(['check', 'new', '--location', 'test-loc', '--rvc', '1', '--employee', '3', '--order-type', '1', '--body', '{}', '--sts-url', 'https://pos.example:443/gateway', '--insecure', '--dry-run']);
+  assert.equal(result.code, 0, result.stderr);
+  const preview = JSON.parse(result.stdout).data;
+  assert.equal(preview.url, 'https://pos.example:443/gateway/api/v1/checks');
+  assert.equal(preview.tlsVerification, false); assert.equal(preview.target, 'override');
+  assert.deepEqual(await readFile(s.store.file), before); assert.equal(calls, 0);
 });
 test('PKCE verifier and SHA256 challenge', () => {
   const value = pkce(); assert.equal(value.verifier.length, 43);

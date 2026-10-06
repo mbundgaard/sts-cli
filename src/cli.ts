@@ -6,15 +6,18 @@ import { StateStore, tokenSummary, validateState } from './state.js';
 import { environments } from './environments.js';
 import { endpoints } from './endpoints.js';
 import { examples, example } from './examples.js';
-import { buildRead, buildCheckRead, buildCheckWrite, baseRequest, simHeaders, integer, decimal, readBody, type Options, type BuiltRequest } from './requests.js';
+import { buildRead, buildCheckRead, buildCheckWrite, baseRequest, simHeaders, integer, decimal, readBody, validateStsUrl, type Options, type BuiltRequest } from './requests.js';
 import { httpExit, request, validateUrl } from './transport.js';
 import { CliError, Exit, localResult, reportError } from './output.js';
+import { networkFailureHint } from './diagnostics.js';
+import { parseJson } from './json.js';
+import { FeedbackStore, registerFeedback } from './feedback.js';
 
 const version: string = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
 export async function execute(req: BuiltRequest, options: Options): Promise<number> {
   if (options.dryRun) {
     localResult('request preview', { method: req.method, url: req.url, headers: req.headers,
-      body: req.body ? JSON.parse(req.body) : undefined, target: req.target, tlsVerification: !req.insecure });
+      body: req.body ? parseJson(req.body) : undefined, target: req.target, tlsVerification: !req.insecure });
     return Exit.ok;
   }
   try {
@@ -28,8 +31,7 @@ export async function execute(req: BuiltRequest, options: Options): Promise<numb
     process.stdout.write(response.body);
     return httpExit(response.status);
   } catch (e) {
-    throw new CliError(Exit.network, `STS request failed: ${(e as Error).message}`,
-      req.method === 'POST' || req.method === 'DELETE' ? 'Outcome may be uncertain. Do not blindly retry a write; reconcile or reuse its explicit idempotency ID.' : undefined);
+    throw new CliError(Exit.network, `STS request failed: ${(e as Error).message}`, networkFailureHint(e, req));
   }
 }
 function network(cmd: Command): Command {
@@ -39,7 +41,9 @@ function network(cmd: Command): Command {
     }, 30);
 }
 function api(cmd: Command): Command {
-  return network(cmd).option('--local-sts-ip <ip|url>', 'This request only: local STS; bare host uses HTTPS port 5443; skips TLS certificate validation')
+  return network(cmd)
+    .option('--sts-url <url>', 'Override saved STS base URL for this call only; explicit http(s):// URL; scheme, port and base path retained; no default port 5443')
+    .option('--insecure', 'This call only: disable HTTPS certificate verification after explicit user confirmation; refused for known Oracle cloud/IDM hosts; never saved')
     .option('--dry-run', 'Build request without network; Authorization omitted; no tokens required');
 }
 function location(cmd: Command, rvc = true): Command {
@@ -53,13 +57,28 @@ function location(cmd: Command, rvc = true): Command {
   return cmd;
 }
 function usageExample(cmd: Command, text: string) {
-  cmd.addHelpText('after', `\nExample:\n  ${text}\n\nSTS response bodies go unchanged to stdout. HTTP diagnostics go to stderr.\n`);
+  cmd.addHelpText('after', `\nExample:\n  ${text}\n\nEndpoint selection:\n  Without --sts-url: use the saved STS URL.\n  --sts-url https://pos.example:5443/gateway overrides it for one call.\n  Explicit ports are retained; omitted ports use HTTPS 443 / HTTP 80.\n  Endpoint paths are appended to the supplied base path. No local/cloud routing.\n  --insecure explicitly disables certificate checks for this call only.\n  Agents: obtain explicit user confirmation for the endpoint before using --insecure.\n  Fix certificate/CA configuration first; never automatically retry with --insecure.\n  The CLI is noninteractive and does not prompt for confirmation itself.\n  Example for a trusted self-signed host: --sts-url https://pos.example:5443 --insecure\n  Known Oracle cloud hosts and the configured IDM host cannot use --insecure.\n  Neither flag changes saved configuration or affects auth login/refresh.\n  Use only a trusted STS URL: the saved Bearer token is sent to it.\n  --local-sts-ip has been removed; bare hosts are not accepted.\n\nSTS response bodies go unchanged to stdout. HTTP diagnostics go to stderr.\n\nOptional feedback: sts feedback status provides agent guidance and reminder eligibility.\nFor suspected CLI bugs or repeated confusion, offer a sanitized report and ask the user first.\nNever submit credentials, STS payloads or unreviewed logs. Feedback is never automatic.\n`);
 }
 export function createProgram(store = new StateStore(), setExit: (code: number) => void = code => { process.exitCode = code; }): Command {
-  const root = new Command('sts').description('Oracle Simphony STS Gen2 CLI. Auth/state + explicit request building + unchanged API response bodies.\nAPI calls: raw stdout, diagnostics on stderr. Local commands: JSON. No automatic write retries.')
+  const feedback = new FeedbackStore(store.directory, version);
+  const runApi = async (req: BuiltRequest, opts: Options) => {
+    const code = await execute(req, opts);
+    if (code === Exit.ok && !opts.dryRun) {
+      try {
+        const interactive = !opts.quiet && !!(process.stdin.isTTY && process.stdout.isTTY && process.stderr.isTTY);
+        if (await feedback.recordSuccess(interactive)) process.stderr.write('\nWould you like to share feedback or rate sts (1-5)? Optional: sts feedback submit --message "..." or --rating <1-5>. Skip freely; snooze with sts feedback snooze, or disable with sts feedback config --reminders off.\n');
+      } catch {
+        // Optional local bookkeeping must never change an STS result or its bytes.
+        if (!opts.quiet) process.stderr.write('Feedback reminder state unavailable; STS result unaffected. Inspect with sts feedback status.\n');
+      }
+    }
+    return code;
+  };
+  const root = new Command('sts').description('Oracle Simphony STS Gen2 CLI. Auth/state + explicit request building + unchanged API response bodies.\nSTS calls: raw stdout, diagnostics on stderr. Local and feedback commands: JSON. No automatic write retries.')
     .version(version).showHelpAfterError().exitOverride();
-  root.addHelpText('after', '\nStart: sts auth env → sts auth config --help → sts auth login → sts auth status\nDiscover: sts endpoints; sts check example --help\nState: STS_HOME or the platform user configuration directory.\nDocs: https://docs.oracle.com/en/industries/food-beverage/simphony/omsstsg2api/\n');
+  root.addHelpText('after', '\nStart: sts auth env → sts auth config --help → sts auth login → sts auth status\nDiscover: sts endpoints; sts check example --help\nOptional feedback: sts feedback status (agent guidance); ask before submitting.\nState: STS_HOME or the platform user configuration directory.\nDocs: https://docs.oracle.com/en/industries/food-beverage/simphony/omsstsg2api/\n');
   root.action(() => { root.outputHelp(); });
+  registerFeedback(root, feedback);
   root.command('version').description('[read-only][local] Show npm CLI and runtime versions').action(() => localResult('version', { version, runtime: process.version, platform: process.platform, architecture: process.arch }));
   root.command('endpoints').description('[read-only][local] List supported GET endpoint definitions and addressing conventions').action(() => localResult('endpoints', endpoints));
   const auth = root.command('auth').description('Configure Oracle IDM, login, refresh and restore saved state');
@@ -78,7 +97,7 @@ export function createProgram(store = new StateStore(), setExit: (code: number) 
   auth.command('env').description('[read-only][local] List Oracle environment presets; custom permits explicit URLs').action(() => localResult('auth env', { environments, custom: true }));
   auth.command('config').description('[writes-state][local] Set configuration; changing account/endpoints clears existing tokens')
     .option('--env <environment>', 'mte2, mte3, mte4, mte5, mtu1 or custom')
-    .option('--auth-url <url>', 'Explicit IDM base URL').option('--sts-url <url>', 'Explicit cloud STS base URL')
+    .option('--auth-url <url>', 'Explicit IDM base URL').option('--sts-url <url>', 'Save the default STS base URL (http(s)://host[:port][/base-path])')
     .option('--org <org>', 'Organization short name').option('--username <user>', 'Oracle API username')
     .option('--client-id <id>', 'OAuth client ID; padding and other significant characters are preserved')
     .action(async opts => {
@@ -94,7 +113,8 @@ export function createProgram(store = new StateStore(), setExit: (code: number) 
         for (const [option, field] of [['authUrl','authUrl'],['stsUrl','stsUrl'],['org','orgName'],['username','username'],['clientId','clientId']] as const) {
           if (opts[option] !== undefined) {
             if (!opts[option].trim()) throw new CliError(Exit.usage, `${option} cannot be blank`);
-            if (option === 'authUrl' || option === 'stsUrl') validateUrl(opts[option]);
+            if (option === 'authUrl') validateUrl(opts[option]);
+            if (option === 'stsUrl') validateStsUrl(opts[option]);
             state.auth[field] = opts[option];
           }
         }
@@ -151,7 +171,7 @@ export function createProgram(store = new StateStore(), setExit: (code: number) 
     if (def.path.includes('{menuId}')) cmd.option('--menu-id <id>', 'Override default composite menu ID');
     if (def.paged) cmd.option('--offset <offset>', 'Page offset', integer).option('--limit <limit>', 'Page limit', integer);
     usageExample(cmd, `sts ${def.noun} ${def.verb}${def.location ? ' --location <loc>' : ''}${def.rvc ? ' --rvc <rvc>' : ''}${def.employeeId ? ' --employee-id <id>' : ''}`);
-    cmd.action(async (opts: Options) => setExit(await execute(buildRead(def, await store.load(), opts), opts)));
+    cmd.action(async (opts: Options) => setExit(await runApi(buildRead(def, await store.load(), opts), opts)));
   }
   const check = root.command('check').description('Read, calculate, create and update POS checks; writes are explicitly labelled');
   const ex = check.command('example [kind]').description('[read-only][local] Print a ready-to-edit JSON body; zero IDs MUST be replaced with lookup results')
@@ -162,10 +182,10 @@ export function createProgram(store = new StateStore(), setExit: (code: number) 
     .option('--since-time <iso-date>', 'Filter since UTC timestamp or YYYY-MM-DD')
     .option('--employee <ref>', 'Filter checkEmployeeRef', integer).option('--order-type <ref>', 'Filter orderTypeRef', integer).option('--table <name>', 'Filter tableName');
   usageExample(list, 'sts check list --location <loc> --rvc <rvc> --since-time 2026-01-01');
-  list.action(async (opts: Options) => setExit(await execute(buildCheckRead('list', undefined, await store.load(), opts), opts)));
+  list.action(async (opts: Options) => setExit(await runApi(buildCheckRead('list', undefined, await store.load(), opts), opts)));
   const get = api(location(check.command('get <checkRef>').description('[read-only][network] Get one check or its printed receipt'))).option('--printed', 'Get the printed receipt response');
   usageExample(get, 'sts check get <checkRef> --location <loc> --rvc <rvc>');
-  get.action(async (ref: string, opts: Options) => setExit(await execute(buildCheckRead('get', ref, await store.load(), opts), opts)));
+  get.action(async (ref: string, opts: Options) => setExit(await runApi(buildCheckRead('get', ref, await store.load(), opts), opts)));
   for (const verb of ['calculate','new','add','delete'] as const) {
     const hasRef = verb === 'add' || verb === 'delete';
     const cmd = api(location(check.command(verb + (hasRef ? ' <checkRef>' : '')).description(
@@ -176,15 +196,15 @@ export function createProgram(store = new StateStore(), setExit: (code: number) 
     }
     if (verb === 'new' || verb === 'add') {
       cmd.option('--idempotency-id <uuid>', 'Stable ID + detect-duplicate-request header; reuse only for retries of this same write')
-        .option('--charged-tip <amount>', 'Set tender chargedTipTotal; never changes tender total or verifies the response', decimal)
-        .option('--pickup-time <iso-time>', 'Override header.pickupTime (requires appropriate POS setup)');
+        .option('--charged-tip <amount>', 'Set tender chargedTipTotal; never changes total. HTTP 200 does not prove a tip applied; inspect returned tenders/totals', decimal)
+        .option('--pickup-time <iso-time>', 'Override header.pickupTime using property-local wall time, not UTC (e.g. 2026-11-01T14:30:00); responses use UTC; requires POS setup');
     }
     usageExample(cmd, `sts check ${verb}${hasRef ? ' <checkRef>' : ''} --location <loc> --rvc <rvc>${verb !== 'delete' ? ' --employee <emp> --order-type <type> --body order.json' : ''} --dry-run`);
     cmd.action(async (...args: unknown[]) => {
       const ref = hasRef ? args[0] as string : undefined;
       const opts = args[hasRef ? 1 : 0] as Options;
       const body = verb === 'delete' ? {} : await readBody(opts.body);
-      setExit(await execute(buildCheckWrite(verb, ref, await store.load(), opts, body), opts));
+      setExit(await runApi(buildCheckWrite(verb, ref, await store.load(), opts, body), opts));
     });
   }
   const connection = root.command('connection').description('STS connectivity diagnostics');
@@ -193,7 +213,7 @@ export function createProgram(store = new StateStore(), setExit: (code: number) 
   connectionStatus.action(async (opts: Options) => {
     const state = await store.load();
     const req = baseRequest(state, opts, '/api/v1/checks/connectionStatus', simHeaders(state, opts));
-    req.method = 'HEAD'; setExit(await execute(req, opts));
+    req.method = 'HEAD'; setExit(await runApi(req, opts));
   });
   return root;
 }
