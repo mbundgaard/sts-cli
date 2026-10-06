@@ -3,6 +3,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { CliError, Exit } from './output.js';
+import { organizationFromClientId } from './identity.js';
 
 export interface AuthConfig {
   environment?: string; authUrl?: string; stsUrl?: string;
@@ -13,11 +14,10 @@ export interface TokenSet {
   obtainedAt?: string; expiresIn?: number;
 }
 export interface State { auth: AuthConfig; tokens?: TokenSet; debugLog?: boolean }
-export function stateDirectory(env: NodeJS.ProcessEnv = process.env, home = os.homedir()): string {
-  if (env.STS_HOME) return path.resolve(env.STS_HOME);
-  if (process.platform === 'win32') return path.join(env.APPDATA || path.join(home, 'AppData', 'Roaming'), 'StsCli');
+export function stateDirectory(home = os.homedir()): string {
+  if (process.platform === 'win32') return path.join(home, 'AppData', 'Roaming', 'StsCli');
   if (process.platform === 'darwin') return path.join(home, 'Library', 'Application Support', 'StsCli');
-  return path.join(env.XDG_CONFIG_HOME || path.join(home, '.config'), 'StsCli');
+  return path.join(home, '.config', 'StsCli');
 }
 function object(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -35,7 +35,10 @@ export function validateState(value: unknown): State {
     if (value.tokens.expiresIn != null && (typeof value.tokens.expiresIn !== 'number' || !Number.isFinite(value.tokens.expiresIn))) throw new Error('tokens.expiresIn must be a number');
     if (typeof value.tokens.obtainedAt === 'string' && !Number.isFinite(Date.parse(value.tokens.obtainedAt))) throw new Error('tokens.obtainedAt must be an ISO timestamp');
   }
-  // Retain the .NET camelCase state shape, including unknown fields for round-tripping.
+  // Any stored organization is derived metadata, not an independent override.
+  if (typeof value.auth.clientId === 'string' && value.auth.clientId) value.auth.orgName = organizationFromClientId(value.auth.clientId);
+  else delete value.auth.orgName;
+  // Retain the camelCase state shape, including unknown fields for round-tripping.
   return value as unknown as State;
 }
 export class StateStore {
@@ -45,7 +48,7 @@ export class StateStore {
     try { return validateState(JSON.parse((await readFile(this.file, 'utf8')).replace(/^\uFEFF/, ''))); }
     catch (e) {
       if ((e as NodeJS.ErrnoException).code === 'ENOENT') return { auth: {} };
-      throw new CliError(Exit.state, `Cannot read state at ${this.file}: ${(e as Error).message}`, 'Repair the file or select a different STS_HOME; it has not been overwritten.');
+      throw new CliError(Exit.state, `Cannot read state at ${this.file}: ${(e as Error).message}`, 'Repair the file in your per-user state directory; it has not been overwritten.');
     }
   }
   async save(state: State): Promise<void> {

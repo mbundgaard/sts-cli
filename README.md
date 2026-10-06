@@ -15,7 +15,7 @@ Authentication. Explicit requests. Unchanged responses.
 
 `sts` is a small, cross-platform TypeScript CLI for **Oracle Simphony Transaction Services Gen2**. Designed for people, scripts, and AI agents, it handles authentication and builds explicit API requests - without hiding what Simphony returns.
 
-- **One command, every platform.** Windows, macOS, and Linux. Node.js 22+, no .NET runtime.
+- **One command, every platform.** Windows, macOS, and Linux. Node.js 22+.
 - **Persistent authentication.** Oracle PKCE login, explicit refresh, and saved token rotation.
 - **Discoverable requests.** Noun–verb commands, structured JSON, editable examples, and network-free previews.
 - **Raw API output.** Response bodies go to stdout unchanged. Diagnostics go to stderr.
@@ -44,23 +44,63 @@ sts --help
 
 Alternatively, run `node bin/sts.js --help` after `npm run build`, without a global installation.
 
+### Check for updates
+
+```sh
+sts version --check
+```
+
+This explicitly checks npm's `latest` tag and returns installed/latest versions,
+`updateAvailable`, and a version-pinned update command when newer. It never installs
+anything. `sts --version` and `sts version` remain local-only. Checks have a 5-second
+timeout, no retries or redirects, and do not send Oracle credentials or configuration.
+An unavailable check is reported as such, not as up to date, and remains advisory.
+
+Agents should check once at session start, not on every STS call, and ask before
+updating. Respect the user's installation method; the suggested npm command is for
+global installs. No automatic update checks are added to normal STS calls.
+
 ### Configure and authenticate
 
 Use your own Oracle API account. **Replace every `<placeholder>`** before running a command.
 
 ```sh
 sts auth env
-sts auth config --env <env> --org <org> --username <user> --client-id <client-id>
+sts auth config --env <env> --username <user> --client-id <client-id>
 ```
 
-Supply your password through the `STS_PASSWORD` environment variable, then:
+The organization/company code is derived from the Base64 client ID, whose decoded
+format is `<organization>.<UUID>`. There is no separate organization input or override.
+The original client ID, including padding, is sent to Oracle unchanged.
+
+For the initial login, pass your password as an argument:
 
 ```sh
-sts auth login
+sts auth login --password "<password>"
 sts auth status
 ```
 
-Nothing ships preconfigured. Passwords are never saved. Tokens are persisted in a per-user directory, outside the npm installation, so upgrades do not remove them. `STS_HOME` overrides that directory.
+For an existing installation or a new agent session, **check `sts auth status`
+first** and reuse saved tokens or explicitly refresh them. Do not rerun setup
+unnecessarily. Agents may use credentials supplied for an authorized login. The
+password is used for login only and is not saved by the CLI. Do not assume it is
+expired, one-time, or requires changing unless Oracle explicitly reports that;
+a 401 alone is insufficient. Refresh uses the saved refresh token, not the password.
+You can rotate the password afterward in Oracle. Never echo the password or include it in feedback. Argument values may be visible in shell history/process
+listings; see [authentication options](docs/AUTHENTICATION.md).
+
+Nothing ships preconfigured. Passwords are never saved. Configuration, tokens and
+feedback state live outside the npm installation, so upgrades do not remove them:
+
+| Platform | State directory |
+|---|---|
+| Windows | `C:\Users\<user>\AppData\Roaming\StsCli` |
+| macOS | `~/Library/Application Support/StsCli` |
+| Linux | `~/.config/StsCli` |
+
+Sessions under the same OS user share this state automatically; there is no directory
+option. Start a new session with `sts auth status` and reuse saved tokens rather than
+repeating setup/login. Different OS users or machines do not automatically share state.
 
 ```sh
 sts auth refresh   # explicitly refresh and save rotated tokens
@@ -105,7 +145,7 @@ Also available: `payment`, `tender-only`, `calculate`, `tip`, and `condiment` ex
 sts check new --location <loc> --rvc <rvc> --employee <emp> --order-type <type> --body order.json --dry-run
 ```
 
-Dry-run builds the request **without contacting Oracle**. It requires a configured organization and either a saved base URL or `--sts-url`, but no token. Authorization is omitted from the preview.
+Dry-run builds the request **without contacting Oracle**. It requires a configured client ID (from which the organization is derived) and either a saved base URL or `--sts-url`, but no token. Authorization is omitted from the preview.
 
 The CLI owns organization, location, RVC, employee, order type, idempotency ID, and - in an added round - the check reference. Other JSON fields are preserved. `--body` accepts a file, inline JSON, or `-` for stdin.
 
@@ -166,8 +206,9 @@ is suspected versus verified, and ask permission before sending. Do not report o
 your own or repeat declined suggestions. A scheduled reminder need not be due to
 offer a relevant bug report.
 
-Reminders are **off by default**. Opt in with `sts feedback config --reminders on`.
-The first becomes due after 7 days or 25 recorded successful STS calls; subsequent
+Reminders are **on by default for new profiles**; existing saved settings are respected.
+The first becomes due after 7 days from the first recorded successful STS call (or
+explicit enabling) or 25 recorded successful STS calls; subsequent
 questions are at least 30 days apart. Interactive reminders go to stderr, never
 into response bodies. Agents/piped invocations check `feedback status` and record
 asking with `feedback asked`. Use `feedback snooze --days 30` or disable reminders
@@ -182,8 +223,7 @@ not a retry. `feedback discard <submissionId>` removes local content/history onl
 not a server row.
 
 The default service is `https://feedback.muneris.cloud/`. Override with
-`sts feedback config --url <base-url>`, `STS_FEEDBACK_URL`, or per-call `--url`
-(in increasing precedence). HTTPS is required except HTTP loopback for development;
+`sts feedback config --url <base-url>` or per-call `--url` (which takes precedence). HTTPS is required except HTTP loopback for development;
 there is no TLS bypass or authentication. `sts feedback health` tests liveness,
 not storage. See the [feedback reference](docs/CLI.md#feedback) for details.
 
@@ -220,11 +260,17 @@ Exit codes: `0` success · `1` unexpected failure · `6` usage · `7` not config
 |---|---|
 | [Command reference](docs/CLI.md) | Filters, requests, examples, endpoint overrides, TLS, limitations |
 | [Authentication and state](docs/AUTHENTICATION.md) | Login, refresh, configuration, storage, restore, troubleshooting |
-| [Migration guide](docs/MIGRATION.md) | Differences from the original .NET CLI |
 | [Development](docs/DEVELOPMENT.md) | Architecture, tests, package validation, release process |
 | [Changelog](CHANGELOG.md) | Changes and release status |
 
 Primary API reference: [Oracle STS Gen2 API Guide](https://docs.oracle.com/en/industries/food-beverage/simphony/omsstsg2api/) ([Swagger](https://docs.oracle.com/en/industries/food-beverage/simphony/omsstsg2api/swagger.json)).
+
+## Support
+
+For direct help, email [support@muneris.dk](mailto:support@muneris.dk).
+Include the CLI version and a short, sanitized description of the problem.
+**Never send passwords, access/refresh tokens, or unreviewed customer data or API dumps.**
+For sensitive security issues, follow [SECURITY.md](SECURITY.md) rather than ordinary feedback.
 
 ## Contributing
 

@@ -8,6 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { FeedbackStore, feedbackUrl } from '../dist/feedback.js';
 import { StateStore } from '../dist/state.js';
+import { clientIdFor } from './fixtures.mjs';
 
 async function setup(t, handler = (_, res) => { res.writeHead(204); res.end(); }) {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sts-feedback-'));
@@ -16,9 +17,10 @@ async function setup(t, handler = (_, res) => { res.writeHead(204); res.end(); }
   t.after(async () => { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); await fs.rm(directory, { recursive: true, force: true }); });
   const url = `http://127.0.0.1:${server.address().port}/`;
   const file = path.join(directory, 'feedback', 'Feedback.json');
-  const store = new FeedbackStore(directory, 'test-version', { STS_FEEDBACK_URL: url });
-  const run = (args, env = {}) => new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, ['bin/sts.js', ...args], { env: { ...process.env, STS_HOME: directory, STS_FEEDBACK_URL: url, STS_PASSWORD: 'synthetic-password-never-send', ...env }, stdio: 'pipe', timeout: 10000 });
+  const store = new FeedbackStore(directory, 'test-version');
+  const run = args => new Promise((resolve, reject) => {
+    const endpoint = args[0] === 'feedback' && ['submit', 'health'].includes(args[1]) && !args.includes('--url') ? ['--url', url] : [];
+    const child = spawn(process.execPath, ['tests/cli-runner.mjs', directory, ...args, ...endpoint], { stdio: 'pipe', timeout: 10000 });
     let stdout = '', stderr = '';
     child.stdout.on('data', c => stdout += c); child.stderr.on('data', c => stderr += c);
     child.on('error', reject); child.on('close', code => resolve({ code, stdout, stderr })); child.stdin.end();
@@ -27,11 +29,12 @@ async function setup(t, handler = (_, res) => { res.writeHead(204); res.end(); }
 }
 const resultData = r => { assert.equal(r.code, 0, r.stderr); return JSON.parse(r.stdout).data; };
 
-test('feedback is opt-in, local status provides consent and bug-report guidance without state creation', async t => {
+test('reminders default on, local status provides consent and bug-report guidance without state creation', async t => {
   let calls = 0;
   const s = await setup(t, (_, res) => { calls++; res.end(); });
   const status = resultData(await s.run(['feedback','status']));
-  assert.equal(status.remindersEnabled, false); assert.equal(status.feedbackDue, false);
+  assert.equal(status.remindersEnabled, true); assert.equal(status.feedbackDue, false);
+  assert.equal(status.startedAt, undefined);
   assert.match(status.agentGuidance.join(' '), /likely CLI bug or recurring agent confusion/);
   assert.match(status.agentGuidance.join(' '), /get approval before sending/);
   assert.equal(calls, 0);
@@ -94,7 +97,8 @@ test('timeout preserves payload; explicit retry reuses bytes and original destin
   const record = (await s.load()).submissions[0];
   assert.equal(record.status, 'failed');
   respond = true;
-  const retried = resultData(await s.run(['feedback','retry',record.payload.submissionId], { STS_FEEDBACK_URL: 'https://unused.example.invalid/' }));
+  await s.store.configure({ url: 'https://unused.example.invalid/' });
+  const retried = resultData(await s.run(['feedback','retry',record.payload.submissionId]));
   assert.equal(retried.submissionId, record.payload.submissionId); assert.equal(bodies.length, 2); assert.equal(bodies[0], bodies[1]);
   assert.equal((await s.load()).submissions[0].attempts, 2);
 });
@@ -126,16 +130,39 @@ test('health uses /health without authentication, and does not imply working sto
 });
 test('base URL validation and precedence are explicit; no /api prefix is invented', async t => {
   const s = await setup(t);
-  const noEnv = new FeedbackStore(s.directory, 'test', {});
-  assert.equal((await noEnv.status()).baseUrl, 'https://feedback.muneris.cloud/');
-  await noEnv.configure({ url: 'https://saved.example/base' });
-  assert.equal((await noEnv.status()).baseUrl, 'https://saved.example/base/');
-  assert.equal((await s.store.status()).baseUrl, s.url);
+  const defaults = new FeedbackStore(s.directory, 'test');
+  assert.equal((await defaults.status()).baseUrl, 'https://feedback.muneris.cloud/');
+  await defaults.configure({ url: 'https://saved.example/base' });
+  assert.equal((await defaults.status()).baseUrl, 'https://saved.example/base/');
+  assert.equal((await s.store.status()).baseUrl, 'https://saved.example/base/');
   const preview = await s.store.submit({ rating: 3, url: 'https://override.example/route', dryRun: true });
   assert.equal(preview.baseUrl, 'https://override.example/route/');
   for (const url of ['http://remote.example', 'https://user:pass@example.com', 'https://example.com?', 'https://example.com#', ' https://example.com']) assert.throws(() => feedbackUrl(url), { exitCode: 6 });
 });
-test('opt-in reminder thresholds, cooldown, snooze and disabling only affect local state', async t => {
+test('new profiles start the default reminder timer on first successful use, without sending feedback', async t => {
+  let calls = 0;
+  const s = await setup(t, (_, res) => { calls++; res.end(); });
+  const start = new Date('2026-01-01T12:00:00Z');
+  assert.equal((await s.store.status(start)).startedAt, undefined);
+  assert.equal(await s.store.recordSuccess(false, start), false);
+  const saved = await s.load();
+  assert.equal(saved.reminders, true);
+  assert.equal(saved.startedAt, start.toISOString());
+  assert.equal(saved.successfulRequests, 1);
+  assert.equal((await s.store.status(new Date(start.getTime() + 6 * 86400000))).feedbackDue, false);
+  assert.equal((await s.store.status(new Date(start.getTime() + 7 * 86400000))).feedbackDue, true);
+  assert.equal(calls, 0);
+});
+test('previously saved off preference stays off and receives no usage updates', async t => {
+  const s = await setup(t);
+  await fs.mkdir(path.dirname(s.file), { recursive: true });
+  const previous = JSON.stringify({ schemaVersion: 1, reminders: false, successfulRequests: 0, submissions: [] });
+  await fs.writeFile(s.file, previous);
+  assert.equal((await s.store.status()).remindersEnabled, false);
+  assert.equal(await s.store.recordSuccess(true), false);
+  assert.equal(await fs.readFile(s.file, 'utf8'), previous);
+});
+test('reminder thresholds, cooldown, snooze and disabling only affect local state', async t => {
   const s = await setup(t);
   const start = new Date('2026-01-01T12:00:00Z');
   const later = days => new Date(start.getTime() + days * 86400000);
@@ -166,7 +193,7 @@ test('opt-in reminder thresholds, cooldown, snooze and disabling only affect loc
 test('CLI STS success counts locally without changing raw bytes or prompting in pipes; dry-run/errors do not count', async t => {
   const body = '{ "number":9007199254740993 }\r\n'; let status = 200;
   const s = await setup(t, (_, res) => { res.writeHead(status); res.end(body); });
-  await new StateStore(s.directory).save({ auth: { orgName: 'synthetic', stsUrl: s.url }, tokens: { accessToken: 'synthetic-access' } });
+  await new StateStore(s.directory).save({ auth: { orgName: 'synthetic', clientId: clientIdFor('synthetic'), stsUrl: s.url }, tokens: { accessToken: 'synthetic-access' } });
   await s.store.configure({ reminders: 'on' }, new Date('2020-01-01T00:00:00Z'));
   const args = ['tender','list','--location','test-loc','--rvc','1'];
   const r = await s.run(args); assert.equal(r.code, 0); assert.equal(r.stdout, body); assert.doesNotMatch(r.stderr, /Would you like/);
@@ -195,7 +222,7 @@ test('a successful POST followed by failed persistence retains a recovery copy a
     t.mock.method(fs, 'rename', async () => { throw new Error('synthetic rename failure'); }); syncBuiltinESMExports();
     res.writeHead(204); res.end();
   });
-  try { await assert.rejects(s.store.submit({ message: 'Retain outcome', quiet: true }), { exitCode: 12 }); }
+  try { await assert.rejects(s.store.submit({ message: 'Retain outcome', quiet: true, url: s.url }), { exitCode: 12 }); }
   finally { t.mock.restoreAll(); syncBuiltinESMExports(); }
   assert.equal(calls, 1);
   const record = (await s.load()).submissions[0]; assert.equal(record.status, 'sending');
@@ -203,5 +230,5 @@ test('a successful POST followed by failed persistence retains a recovery copy a
   assert.ok(temp); assert.ok(!files.some(x => x.endsWith('.lock')));
   const recovered = JSON.parse(await fs.readFile(path.join(path.dirname(s.file), temp), 'utf8'));
   assert.equal(recovered.submissions[0].status, 'sent');
-  await assert.rejects(s.store.submit({ message: 'Retain outcome', quiet: true }), { exitCode: 12 }); assert.equal(calls, 1);
+  await assert.rejects(s.store.submit({ message: 'Retain outcome', quiet: true, url: s.url }), { exitCode: 12 }); assert.equal(calls, 1);
 });

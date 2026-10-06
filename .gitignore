@@ -26,6 +26,9 @@ order*.json
 posted*.json
 tender[0-9]*.json
 
+# Local reference material
+/references/
+
 # Local agent/editor metadata
 .pi-intercom/
 .pi/

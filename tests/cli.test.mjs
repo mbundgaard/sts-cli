@@ -9,8 +9,10 @@ import { gzipSync } from 'node:zlib';
 import { StateStore } from '../dist/state.js';
 import { pkce } from '../dist/auth.js';
 import { createHash } from 'node:crypto';
+import { clientIdFor } from './fixtures.mjs';
+const testClientId = clientIdFor('test-org-padded');
 
-const launcher = path.resolve('bin/sts.js');
+const launcher = path.resolve('tests/cli-runner.mjs');
 async function setup(t, handler) {
   const directory = await mkdtemp(path.join(tmpdir(), 'sts-ts-test-'));
   const server = http.createServer(handler);
@@ -18,13 +20,13 @@ async function setup(t, handler) {
   t.after(async () => { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); await rm(directory, { recursive: true, force: true }); });
   const base = `http://127.0.0.1:${server.address().port}`;
   const store = new StateStore(directory);
-  await store.save({ auth: { orgName: 'test-org', authUrl: base, stsUrl: base, clientId: 'test-client==', username: 'test-user' },
+  await store.save({ auth: { orgName: 'test-org-padded', authUrl: base, stsUrl: base, clientId: testClientId, username: 'test-user' },
     tokens: { accessToken: 'test-access', refreshToken: 'test-refresh', codeVerifier: 'test-verifier', obtainedAt: new Date().toISOString(), expiresIn: 3600 } });
   return { directory, store, base, run: (args, stdin = '') => run(directory, args, stdin) };
 }
 function run(directory, args, stdin = '') {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [launcher, ...args], { env: { ...process.env, STS_HOME: directory, STS_PASSWORD: '' }, stdio: 'pipe' });
+    const child = spawn(process.execPath, [launcher, directory, ...args], { stdio: 'pipe' });
     const out = [], err = [];
     child.stdout.on('data', c => out.push(c)); child.stderr.on('data', c => err.push(c));
     child.on('error', reject); child.on('close', code => resolve({ code, stdout: Buffer.concat(out), stderr: Buffer.concat(err).toString() }));
@@ -140,8 +142,9 @@ test('refresh persists rotation and never outputs tokens', async t => {
     const chunks = []; for await (const c of req) chunks.push(c);
     const form = new URLSearchParams(Buffer.concat(chunks).toString());
     assert.equal(form.get('grant_type'), 'refresh_token');
-    assert.equal(form.get('client_id'), 'test-client==');
+    assert.equal(form.get('client_id'), testClientId);
     assert.equal(form.get('code_verifier'), 'test-verifier');
+    assert.equal(form.has('password'), false);
     res.end(JSON.stringify({ access_token: 'rotated-access', refresh_token: 'rotated-refresh', expires_in: 3600 }));
   });
   const result = await s.run(['auth','refresh']);
@@ -155,14 +158,15 @@ test('login uses cookies, PKCE and preserves padded client ID', async t => {
   const s = await setup(t, async (req, res) => {
     const url = new URL(req.url, 'http://test');
     if (url.pathname.endsWith('/authorize')) {
-      assert.equal(url.searchParams.get('client_id'), 'test-client==');
+      assert.equal(url.searchParams.get('client_id'), testClientId);
       challenge = url.searchParams.get('code_challenge');
       res.setHeader('Set-Cookie', 'session=test-session; Path=/'); res.end('login'); return;
     }
     const chunks = []; for await (const c of req) chunks.push(c);
     const form = new URLSearchParams(Buffer.concat(chunks).toString());
     if (url.pathname.endsWith('/signin')) {
-      assert.match(req.headers.cookie, /session=test-session/); assert.match(req.headers.cookie, /client_id=test-client%3D%3D/);
+      assert.match(req.headers.cookie, /session=test-session/); assert.ok(req.headers.cookie.includes('client_id=' + encodeURIComponent(testClientId)));
+      assert.equal(form.get('orgname'), 'test-org-padded');
       assert.equal(form.get('password'), 'mock-password');
       res.end(JSON.stringify({ nextOp: 'redirect', redirectUrl: 'apiaccount://callback?code=mock-code' })); return;
     }
@@ -173,6 +177,72 @@ test('login uses cookies, PKCE and preserves padded client ID', async t => {
   const result = await s.run(['auth','login','--password','mock-password']);
   assert.equal(result.code, 0, result.stderr);
   assert.equal((await s.store.load()).tokens.refreshToken, 'login-refresh');
+  assert.doesNotMatch(result.stdout.toString() + result.stderr, /mock-password/);
+  assert.doesNotMatch(await readFile(s.store.file, 'utf8'), /mock-password/);
+});
+test('login help supports authorized password arguments and explains token reuse', async t => {
+  const s = await setup(t, () => { throw new Error('Help must remain local'); });
+  const result = await s.run(['auth','login','--help']);
+  assert.equal(result.code, 0);
+  const help = result.stdout.toString().replace(/\s+/g, ' ');
+  assert.match(help, /--password/);
+  assert.match(help, /use --password as requested/);
+  assert.match(help, /reuse saved tokens/);
+  assert.match(help, /used for login only and is not saved/);
+  assert.match(help, /HTTP 401 alone does not establish a password-change requirement/);
+  assert.match(help, /Refresh uses the saved refresh token, not the password/);
+  assert.match(help, /You can rotate the password afterward in Oracle/);
+});
+test('separate invocations reuse saved auth and feedback state, with no CLI directory override', async t => {
+  const s = await setup(t, () => { throw new Error('Local commands must not contact network'); });
+  const original = await readFile(s.store.file, 'utf8');
+  for (let i = 0; i < 2; i++) {
+    const status = await s.run(['auth','status']);
+    assert.equal(status.code, 0, status.stderr);
+    assert.equal(JSON.parse(status.stdout).data.configPath, s.store.file);
+    assert.equal(JSON.parse(status.stdout).data.tokens.hasAccessToken, true);
+  }
+  const feedback = await s.run(['feedback','config','--url','https://feedback.example.invalid','--reminders','off']);
+  assert.equal(feedback.code, 0, feedback.stderr);
+  const again = await s.run(['feedback','status']);
+  assert.equal(JSON.parse(again.stdout).data.remindersEnabled, false);
+  assert.equal(JSON.parse(again.stdout).data.baseUrl, 'https://feedback.example.invalid/');
+  assert.equal(await readFile(s.store.file, 'utf8'), original);
+  assert.equal((await s.run(['--state-dir','unused','auth','status'])).code, 6);
+  const help = await s.run(['--help']);
+  assert.doesNotMatch(help.stdout.toString(), /--state-dir/);
+});
+test('login requires an explicit password argument and makes no call when absent', async t => {
+  let calls = 0;
+  const s = await setup(t, (_, res) => { calls++; res.end(); });
+  const result = await s.run(['auth','login']);
+  assert.equal(result.code, 6);
+  assert.match(result.stderr, /Supply --password/);
+  assert.equal(calls, 0);
+});
+test('config derives organization, rejects --org and malformed IDs, and clears tokens on client-ID changes', async t => {
+  const s = await setup(t, () => { throw new Error('Configuration must remain local'); });
+  const before = await readFile(s.store.file, 'utf8');
+  const rejected = await s.run(['auth','config','--org','override']);
+  assert.equal(rejected.code, 6);
+  assert.equal(await readFile(s.store.file, 'utf8'), before);
+  const invalid = await s.run(['auth','config','--client-id','invalid-id']);
+  assert.equal(invalid.code, 6);
+  assert.equal(await readFile(s.store.file, 'utf8'), before);
+  const help = await s.run(['auth','config','--help']);
+  assert.doesNotMatch(help.stdout.toString(), /--org\b/);
+  const id = clientIdFor('New.Org');
+  const updated = await s.run(['auth','config','--client-id',id]);
+  assert.equal(updated.code, 0, updated.stderr);
+  const state = await s.store.load();
+  assert.equal(state.auth.orgName, 'New.Org'); assert.equal(state.auth.clientId, id);
+  assert.equal(state.tokens, undefined);
+  state.auth.orgName = 'not-an-override';
+  await writeFile(s.store.file, JSON.stringify(state));
+  const shown = await s.run(['auth','show']);
+  assert.equal(JSON.parse(shown.stdout).data.config.orgName, 'New.Org');
+  const preview = await s.run(['tender','list','--location','test-loc','--rvc','1','--dry-run']);
+  assert.equal(new URL(JSON.parse(preview.stdout).data.url).searchParams.get('OrgShortName'), 'New.Org');
 });
 test('state mutations are locked and failed actions leave state intact', async t => {
   const s = await setup(t, (_, res) => res.end());
@@ -188,13 +258,13 @@ test('corrupt state is not silently discarded', async t => {
   const result = await s.run(['auth','status']); assert.equal(result.code, 12); assert.equal(result.stdout.length, 0);
   assert.equal(await readFile(s.store.file, 'utf8'), '{broken');
 });
-test('restore legacy-shaped state, refuse overwrite and allow force', async t => {
+test('restore saved state, refuse overwrite and allow force', async t => {
   const s = await setup(t, (_, res) => res.end());
-  const file = path.join(s.directory, 'legacy.json');
-  await writeFile(file, '\uFEFF' + JSON.stringify({ auth: { clientId: 'restored==' }, tokens: { accessToken: 'saved' }, debugLog: false }));
+  const file = path.join(s.directory, 'saved-state.json');
+  await writeFile(file, '\uFEFF' + JSON.stringify({ auth: { clientId: clientIdFor('restored-org') }, tokens: { accessToken: 'saved' }, debugLog: false }));
   assert.equal((await s.run(['auth','restore','--file',file])).code, 12);
   assert.equal((await s.run(['auth','restore','--file',file,'--force'])).code, 0);
-  assert.equal((await s.store.load()).auth.clientId, 'restored==');
+  assert.equal((await s.store.load()).auth.clientId, clientIdFor('restored-org'));
 });
 test('validation and local errors produce no API stdout or network', async t => {
   let calls = 0;

@@ -4,7 +4,7 @@
 
 `sts` is a TypeScript CLI for Oracle Simphony STS Gen2, distributed as
 `@muneris/sts-cli`. Node.js 22+; Windows, macOS and Linux. This is a REST client,
-not a UI automation project. No legacy .NET code is part of this repository.
+not a UI automation project.
 
 ## Workflow
 
@@ -44,7 +44,7 @@ Exit codes: 0 success, 1 unexpected local failure, 6 usage, 7 not configured,
 - Offline tests use synthetic local mocks, never live tenant fixtures.
 - Real credentials, tokens, customer data and API dumps must never enter source
   control, tests, docs, npm packages or public issue reports.
-- Passwords are never saved. Tokens use private per-user state or STS_HOME.
+- Passwords are never saved. Tokens use the fixed private per-user application-data directory.
 - Respect the exact locations and operations authorized for live testing.
   Organization-wide discovery is not a location-scoped test.
 - New/add/delete are destructive live operations. Calculator is non-persisting.
@@ -64,6 +64,39 @@ Exit codes: 0 success, 1 unexpected local failure, 6 usage, 7 not configured,
 - Corrupt state must be reported, not silently reset. Lock auth mutations and
   persist rotated tokens atomically. Other clients may not honor the lock.
 
+## Authentication, updates and support
+
+- Derive organization/company code from the Base64 client ID's `<organization>.<UUID>`
+  format. Never ask for a separate company code or override it. Send the original
+  client ID unchanged, including padding; reject malformed IDs instead of guessing.
+
+- Start each session with `sts auth status`; saved state is per OS user, not per
+  agent session. Windows uses AppData/Roaming/StsCli beneath the user's home;
+  macOS uses ~/Library/Application Support/StsCli; Linux uses ~/.config/StsCli.
+  There is no directory override. Reuse valid tokens or explicitly refresh them.
+  Different OS users or machines do not automatically share this state.
+  Do not rerun config/login unnecessarily: configuration changes clear tokens.
+- If the user supplies credentials and authorizes login, use
+  `sts auth login --password "<password>"` as requested. Do not refuse solely
+  because a password was supplied. Argument values may be visible to the shell/OS.
+  The password is used for login only and is not saved by the CLI. Later sessions
+  reuse saved tokens. Do not assume it is expired, one-time, or requires changing
+  unless Oracle explicitly reports that; HTTP 401 alone is insufficient evidence.
+  Refresh uses saved tokens, not the password. The user can rotate the password
+  afterward in Oracle.
+  Never echo, log, store or report it.
+- Newly granted location access requires a newly issued token after permissions
+  have propagated (typically about 20 minutes after adding the location, not a
+  guaranteed deadline). An existing token or one issued too early may not reflect the
+  grant. Verify only the authorized location; do not diagnose a password problem
+  or repeatedly retry login solely from a propagation-related access denial.
+- Check `sts version --check` once at session start, not on every request. Notify
+  the user if newer and get approval before updating. Respect their installation
+  method and active work. An unavailable check does not mean up to date and must
+  not block other tasks. No updates are installed automatically.
+- Direct/private support: support@muneris.dk. Share a version and sanitized
+  description, never credentials or unreviewed customer data.
+
 ## Optional feedback
 
 - `sts feedback status` is a local JSON command with reminder eligibility and
@@ -77,8 +110,8 @@ Exit codes: 0 success, 1 unexpected local failure, 6 usage, 7 not configured,
   from suspicions, POS configuration issues and agent misunderstandings. Do not
   interrupt urgent work, automatically report failures or repeat declined offers.
 - Once you ask, use `feedback asked`; respect skip, `feedback snooze`, and
-  `feedback config --reminders off`. Reminders are opt-in, with only local counts
-  and timestamps. Noninteractive clients check status instead of receiving nags.
+  `feedback config --reminders off`. Reminders default on for new profiles,
+  respect existing saved settings, and use only local counts and timestamps. Noninteractive clients check status instead of receiving nags.
 - Send only approved text/rating and product metadata. Never include credentials,
   customer data, private tenant identifiers or raw request/response/console dumps.
 - POST success is 204 with no JSON body. Health proves liveness, not storage.

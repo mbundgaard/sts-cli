@@ -5,6 +5,14 @@ import { syncBuiltinESMExports } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 import { StateStore } from '../dist/state.js';
+import { clientIdFor } from './fixtures.mjs';
+
+test('default state uses the OS user application-data directory', () => {
+  const expected = process.platform === 'win32' ? path.join(os.homedir(), 'AppData', 'Roaming', 'StsCli')
+    : process.platform === 'darwin' ? path.join(os.homedir(), 'Library', 'Application Support', 'StsCli')
+      : path.join(os.homedir(), '.config', 'StsCli');
+  assert.equal(new StateStore().directory, expected);
+});
 
 async function storeFor(t) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'sts-recovery-'));
@@ -13,7 +21,7 @@ async function storeFor(t) {
 }
 test('failed rename preserves complete rotated-token recovery and old state', async t => {
   const store = await storeFor(t);
-  const old = { auth: { orgName: 'synthetic' }, tokens: { refreshToken: 'old-synthetic-token' } };
+  const old = { auth: { orgName: 'synthetic', clientId: clientIdFor('synthetic') }, tokens: { refreshToken: 'old-synthetic-token' } };
   const rotated = { ...old, tokens: { refreshToken: 'rotated-synthetic-token' } };
   await store.save(old);
   t.mock.method(fs, 'rename', async () => { throw Object.assign(new Error('synthetic rename denied'), { code: 'EACCES' }); });
@@ -43,7 +51,7 @@ test('failed rename preserves complete rotated-token recovery and old state', as
 });
 for (const failure of ['writeFile', 'sync']) test(`failed ${failure} cleans incomplete replacement without suggesting recovery`, async t => {
   const store = await storeFor(t);
-  const old = { auth: { orgName: 'synthetic' } };
+  const old = { auth: { orgName: 'synthetic', clientId: clientIdFor('synthetic') } };
   await store.save(old);
   const originalOpen = fs.open;
   t.mock.method(fs, 'open', async (...args) => {

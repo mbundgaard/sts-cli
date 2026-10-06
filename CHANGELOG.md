@@ -2,6 +2,33 @@
 
 Notable changes are documented here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+- Add allowlisted, release-tagged MunerisTools catalog export with npm metadata,
+  documentation tabs and explicitly reviewed optional screenshots. The companion
+  site workflow opens a reviewed update PR rather than publishing unreleased docs.
+
+- Remove `--org`. Derive organization exclusively from the Base64 client ID's
+  `<organization>.<UUID>` format, including saved/imported state; preserve the
+  original client ID unchanged and reject unrecognized formats.
+
+- Remove application configuration via shell variables. Use `--password` and
+  feedback URL flags or saved configuration instead. State always uses the fixed
+  per-user application-data directory, with no directory override.
+- Describe password handling as "used for login only"; do not infer an expired,
+  one-time, or mandatory-change password from a generic HTTP 401.
+
+- Add explicit, advisory `sts version --check` against npm, with SemVer comparison,
+  bounded timeout and a version-pinned update suggestion; never auto-install.
+- Surface support@muneris.dk in README/help and agent guidance.
+- Clarify normal `--password` login support and cross-session token reuse for agents;
+  the password is used during login, not persisted or required for refresh.
+
+- Enable local feedback reminders by default for new profiles, preserving existing
+  saved preferences. Start the timer on the first successful STS call or explicit
+  enabling; feedback submission still requires user approval.
+- Remove the migration guide and related legacy migration messaging; retain saved-state import.
+
 ## 0.3.0 - 2026-10-06
 
 - Add `feedback` commands for approved messages/1-5 ratings, local previews,

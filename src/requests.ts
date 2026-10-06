@@ -51,7 +51,7 @@ function canUseInsecure(url: URL, state: State): boolean {
   return true;
 }
 export function baseRequest(state: State, options: Options, apiPath: string, headers: Record<string, string> = {}): BuiltRequest {
-  if (!state.auth.orgName) throw new CliError(Exit.notConfigured, 'Organization not configured; run sts auth config');
+  if (!state.auth.orgName) throw new CliError(Exit.notConfigured, 'Client ID not configured; run sts auth config --client-id <id>');
   const base = options.stsUrl ?? state.auth.stsUrl;
   if (base === undefined) throw new CliError(Exit.notConfigured, 'STS URL not configured; supply --sts-url or run sts auth config');
   const url = validateStsUrl(base);

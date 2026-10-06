@@ -19,13 +19,17 @@ npm pack --dry-run
 ```text
 .github/         GitHub CI and contribution templates
 bin/sts.js       npm command entry point
+catalog/         Public catalog frame and explicitly reviewed screenshots
 docs/            User and developer guides
-scripts/         Package validation utilities
+scripts/         Package validation and public catalog export utilities
 src/             TypeScript implementation
 tests/           Offline tests and mock servers
 ```
 
-Generated `dist/`, `node_modules/`, and package archives are ignored. `StsCli.json` belongs in the platform user directory or a private `STS_HOME`, never in the project.
+Generated `dist/`, `node_modules/`, and package archives are ignored. `StsCli.json` belongs in the platform user application-data directory, never in the project.
+Tests inject isolated stores through an unpackaged test runner; production has no
+directory flag. Package checks exercise the real shim for help/version/parser exits
+and the installed modules with an isolated store for stateful checks.
 
 ## Implementation map
 
@@ -34,6 +38,7 @@ Generated `dist/`, `node_modules/`, and package archives are ignored. `StsCli.js
 | `cli.ts` | Command tree, help, handlers |
 | `auth.ts` | PKCE, cookies, login, refresh |
 | `state.ts` | State paths, validation, compatibility, locked atomic saves |
+| `identity.ts` | Derive organization from the Base64 client ID without modifying the original ID |
 | `endpoints.ts` | Declarative read endpoint catalog |
 | `requests.ts` | Input validation and request construction |
 | `json.ts` | Node 22+ source-aware request JSON parsing; preserve numeric precision, never parse STS responses |
@@ -41,7 +46,8 @@ Generated `dist/`, `node_modules/`, and package archives are ignored. `StsCli.js
 | `examples.ts` | Minimal structured request templates |
 | `output.ts` | Local JSON results, errors and exit codes |
 | `diagnostics.ts` | Certificate-failure guidance, explicit user-confirmation requirement, write-uncertainty hints |
-| `feedback.ts` | Separate unauthenticated feedback service, private outbox/history, local opt-in reminders and agent guidance |
+| `feedback.ts` | Separate unauthenticated feedback service, private outbox/history, local configurable reminders and agent guidance |
+| `updates.ts` | Explicit advisory npm lookup and SemVer comparison; no installation or STS side effects |
 
 Keep STS response JSON parsing out of the transport/execution path. Test Buffer equality,
 not just parsed JSON equivalence: whitespace, numeric representations and trailing
@@ -65,7 +71,7 @@ other clients.
 - [Oracle STS Gen2 guide](https://docs.oracle.com/en/industries/food-beverage/simphony/omsstsg2api/)
 - [Oracle Swagger](https://docs.oracle.com/en/industries/food-beverage/simphony/omsstsg2api/swagger.json)
 
-The initial port checked endpoint paths, methods and addressing against Oracle's
+Endpoint paths, methods and addressing were checked against Oracle's
 published specification. IDM authentication endpoints are not part of that STS Swagger;
 the PKCE implementation follows the previously tested client flow. Fresh mocked login
 and real token refresh are separate forms of validation.
@@ -118,7 +124,7 @@ are used. See [npm's trusted-publisher guide](https://docs.npmjs.com/trusted-pub
 Release steps:
 
 1. Bump `package.json` and `package-lock.json` to a new stable version, update the
-   changelog, test, and push the reviewed changes. Version `0.2.0` is already published.
+   changelog, test, and push the reviewed changes. Version `0.3.0` is already published.
 2. Create a tag `v<version>` on that reviewed commit and publish its GitHub release.
 3. The workflow validates the tagged source on Windows/macOS/Linux with Node 22/24,
    checks that the tag matches both package version fields in the lockfile, and refuses
@@ -131,8 +137,41 @@ Release steps:
 Prereleases are deliberately skipped. Published versions are immutable. To release
 another build, bump the version; do not rerun publication for an existing version.
 Protect release tags and restrict who can publish GitHub releases. A matching workflow
-file must exist in the tagged commit. The workflow itself must still be exercised on a
-future approved release; local tests do not establish that npm's OIDC exchange works.
+file must exist in the tagged commit. Trusted publishing was verified for `0.3.0`;
+local tests alone do not establish that a subsequent remote publication succeeded.
+
+### MunerisTools catalog synchronization
+
+STS owns its public content. `catalog/tool.json` supplies catalog-only metadata;
+`scripts/export-catalog.mjs` exports a fixed allowlist of README, changelog and guides
+with tab frontmatter, plus generated npm release metadata. Relative documentation
+links are anchored to the matching release commit. No duplicate documentation tree is
+maintained, and none of these development scripts/catalog inputs enter the npm package.
+
+MunerisTools' `sync-sts.yml` runs hourly or manually. It reads npm's stable `latest`,
+requires the matching published GitHub release, checks out that exact tag and runs
+its exporter into a fresh staging directory. It verifies npm `gitHead` when provided,
+records the resolved commit, rejects version downgrades/moved recorded tags, and
+opens or updates a PR replacing **only** `site/tools/sts-cli/`. Human review/merge
+triggers the existing Pages deployment. STS main is never used as published docs.
+
+The `0.3.0` tag predates the exporter and is deliberately skipped. The first new
+release containing this wiring will supply the new npm catalog entry; its changelog
+must have a matching version heading and no unpublished notes under `Unreleased`.
+The npm version remains authoritative while the site PR awaits review.
+
+For optional images, add reviewed public PNG/JPEG/GIF/WebP/AVIF files under
+`catalog/screenshots/` and list their filenames in `catalog/tool.json`'s `screenshots`
+array. Only listed files are copied. Review pixels and metadata for credentials,
+tenant/customer data and private paths. No screenshots are currently listed.
+Private references, token state, logs, arbitrary repo files and old website screenshots
+are not copied. Symlinks and traversing image paths are rejected.
+
+MunerisTools needs GitHub Actions permission to create pull requests (repository
+Settings > Actions > General > Workflow permissions). Its own `GITHUB_TOKEN` is used;
+no cross-repository PAT or new secret is needed. Scheduled workflows can be delayed
+or disabled after inactivity; use **Sync published STS catalog > Run workflow** to
+check explicitly. This is reviewed publication, not automatic installation or release.
 
 ### Manual fallback
 

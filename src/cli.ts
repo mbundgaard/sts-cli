@@ -12,6 +12,8 @@ import { CliError, Exit, localResult, reportError } from './output.js';
 import { networkFailureHint } from './diagnostics.js';
 import { parseJson } from './json.js';
 import { FeedbackStore, registerFeedback } from './feedback.js';
+import { checkForUpdates } from './updates.js';
+import { organizationFromClientId } from './identity.js';
 
 const version: string = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
 export async function execute(req: BuiltRequest, options: Options): Promise<number> {
@@ -59,7 +61,7 @@ function location(cmd: Command, rvc = true): Command {
 function usageExample(cmd: Command, text: string) {
   cmd.addHelpText('after', `\nExample:\n  ${text}\n\nEndpoint selection:\n  Without --sts-url: use the saved STS URL.\n  --sts-url https://pos.example:5443/gateway overrides it for one call.\n  Explicit ports are retained; omitted ports use HTTPS 443 / HTTP 80.\n  Endpoint paths are appended to the supplied base path. No local/cloud routing.\n  --insecure explicitly disables certificate checks for this call only.\n  Agents: obtain explicit user confirmation for the endpoint before using --insecure.\n  Fix certificate/CA configuration first; never automatically retry with --insecure.\n  The CLI is noninteractive and does not prompt for confirmation itself.\n  Example for a trusted self-signed host: --sts-url https://pos.example:5443 --insecure\n  Known Oracle cloud hosts and the configured IDM host cannot use --insecure.\n  Neither flag changes saved configuration or affects auth login/refresh.\n  Use only a trusted STS URL: the saved Bearer token is sent to it.\n  --local-sts-ip has been removed; bare hosts are not accepted.\n\nSTS response bodies go unchanged to stdout. HTTP diagnostics go to stderr.\n\nOptional feedback: sts feedback status provides agent guidance and reminder eligibility.\nFor suspected CLI bugs or repeated confusion, offer a sanitized report and ask the user first.\nNever submit credentials, STS payloads or unreviewed logs. Feedback is never automatic.\n`);
 }
-export function createProgram(store = new StateStore(), setExit: (code: number) => void = code => { process.exitCode = code; }): Command {
+export function createProgram(store = new StateStore(), setExit: (code: number) => void = code => { process.exitCode = code; }, checkVersion = checkForUpdates): Command {
   const feedback = new FeedbackStore(store.directory, version);
   const runApi = async (req: BuiltRequest, opts: Options) => {
     const code = await execute(req, opts);
@@ -76,10 +78,14 @@ export function createProgram(store = new StateStore(), setExit: (code: number) 
   };
   const root = new Command('sts').description('Oracle Simphony STS Gen2 CLI. Auth/state + explicit request building + unchanged API response bodies.\nSTS calls: raw stdout, diagnostics on stderr. Local and feedback commands: JSON. No automatic write retries.')
     .version(version).showHelpAfterError().exitOverride();
-  root.addHelpText('after', '\nStart: sts auth env → sts auth config --help → sts auth login → sts auth status\nDiscover: sts endpoints; sts check example --help\nOptional feedback: sts feedback status (agent guidance); ask before submitting.\nState: STS_HOME or the platform user configuration directory.\nDocs: https://docs.oracle.com/en/industries/food-beverage/simphony/omsstsg2api/\n');
+  root.addHelpText('after', '\nStart: sts auth status; reuse saved tokens or explicitly refresh when needed.\nFirst-time setup only: sts auth env → sts auth config --help → sts auth login\nDiscover: sts endpoints; sts check example --help\nUpdates: agents may run sts version --check once per session; ask before updating.\nSupport: support@muneris.dk (never send passwords, tokens or unreviewed customer data).\nOptional feedback: sts feedback status (agent guidance); ask before submitting.\nState: shared per OS user (Windows: AppData/Roaming/StsCli); no directory override.\nDocs: https://docs.oracle.com/en/industries/food-beverage/simphony/omsstsg2api/\n');
   root.action(() => { root.outputHelp(); });
   registerFeedback(root, feedback);
-  root.command('version').description('[read-only][local] Show npm CLI and runtime versions').action(() => localResult('version', { version, runtime: process.version, platform: process.platform, architecture: process.arch }));
+  root.command('version').description('[read-only] Show installed/runtime versions; --check explicitly queries npm')
+    .option('--check', 'Check npm latest with a 5-second timeout; advisory only, never installs updates')
+    .addHelpText('after', '\nAgents: check once at session start, not on every STS call. Notify only if newer and ask before updating.\nAn unavailable check is not proof that the installed version is current; continue the user\'s work.\nThe update command is for global npm installs. Respect the installation method in use.\nNo Oracle credentials, configuration or customer data are sent. Normal STS calls never check npm.\nSupport: support@muneris.dk. Never email passwords, tokens or unreviewed customer data.\n')
+    .action(async opts => localResult('version', { version, runtime: process.version, platform: process.platform, architecture: process.arch,
+      ...(opts.check ? { update: await checkVersion(version) } : {}) }));
   root.command('endpoints').description('[read-only][local] List supported GET endpoint definitions and addressing conventions').action(() => localResult('endpoints', endpoints));
   const auth = root.command('auth').description('Configure Oracle IDM, login, refresh and restore saved state');
   const status = async () => {
@@ -98,8 +104,8 @@ export function createProgram(store = new StateStore(), setExit: (code: number) 
   auth.command('config').description('[writes-state][local] Set configuration; changing account/endpoints clears existing tokens')
     .option('--env <environment>', 'mte2, mte3, mte4, mte5, mtu1 or custom')
     .option('--auth-url <url>', 'Explicit IDM base URL').option('--sts-url <url>', 'Save the default STS base URL (http(s)://host[:port][/base-path])')
-    .option('--org <org>', 'Organization short name').option('--username <user>', 'Oracle API username')
-    .option('--client-id <id>', 'OAuth client ID; padding and other significant characters are preserved')
+    .option('--username <user>', 'Oracle API username')
+    .option('--client-id <id>', 'Base64 <organization>.<UUID>; organization is derived automatically, original ID preserved')
     .action(async opts => {
       if (!Object.keys(opts).length) { const state = await store.load(); localResult('auth config', { config: state.auth, configPath: store.file }); return; }
       await store.mutate(async state => {
@@ -110,11 +116,12 @@ export function createProgram(store = new StateStore(), setExit: (code: number) 
           if (preset) Object.assign(state.auth, { environment: preset.key, authUrl: preset.authUrl, stsUrl: preset.stsUrl });
           else state.auth.environment = 'custom';
         }
-        for (const [option, field] of [['authUrl','authUrl'],['stsUrl','stsUrl'],['org','orgName'],['username','username'],['clientId','clientId']] as const) {
+        for (const [option, field] of [['authUrl','authUrl'],['stsUrl','stsUrl'],['username','username'],['clientId','clientId']] as const) {
           if (opts[option] !== undefined) {
             if (!opts[option].trim()) throw new CliError(Exit.usage, `${option} cannot be blank`);
             if (option === 'authUrl') validateUrl(opts[option]);
             if (option === 'stsUrl') validateStsUrl(opts[option]);
+            if (option === 'clientId') state.auth.orgName = organizationFromClientId(opts[option]);
             state.auth[field] = opts[option];
           }
         }
@@ -124,10 +131,11 @@ export function createProgram(store = new StateStore(), setExit: (code: number) 
       localResult('auth config', { updated: true, configPath: store.file });
     });
   network(auth.command('login').description('[writes-state][network] Oracle authorization-code + PKCE login; password is never stored'))
-    .option('--username <user>', 'Override saved username for this login').option('--password <password>', 'Password; prefer the STS_PASSWORD environment variable')
+    .option('--username <user>', 'Override saved username for this login').option('--password <password>', 'Password for this login only; never saved')
+    .addHelpText('after', '\nExample: sts auth login --password "<password>"\nAgents: first run sts auth status and reuse saved tokens or explicitly refresh them.\nWhen the user supplies credentials and authorizes login, use --password as requested;\ndo not refuse solely because a password was supplied.\nThe password is used for login only and is not saved by the CLI. Later sessions reuse saved tokens.\nRefresh uses the saved refresh token, not the password. You can rotate the password afterward in Oracle.\nDo not assume it is expired, one-time, or requires changing unless Oracle explicitly reports that.\nHTTP 401 alone does not establish a password-change requirement. Never echo it or include it in feedback.\nArgument values can be visible in shell history/process listings.\n')
     .action(async opts => {
-      const password = opts.password ?? process.env.STS_PASSWORD;
-      if (!password) throw new CliError(Exit.usage, 'Supply STS_PASSWORD or --password');
+      const password = opts.password;
+      if (!password) throw new CliError(Exit.usage, 'Supply --password');
       await store.mutate(async state => {
         if (opts.username) state.auth.username = opts.username;
         state.tokens = await new AuthClient(opts.timeout * 1000, opts.quiet).login(state.auth, password);
@@ -144,7 +152,7 @@ export function createProgram(store = new StateStore(), setExit: (code: number) 
       });
       localResult('auth refresh', { saved: true, refreshTokenRotated: rotated, configPath: store.file, tokens: tokenSummary((await store.load()).tokens) });
     });
-  auth.command('restore').description('[writes-state][local] Import a saved StsCli.json (including legacy .NET state); never contacts Oracle')
+  auth.command('restore').description('[writes-state][local] Import a saved StsCli.json; never contacts Oracle')
     .requiredOption('--file <path>', 'Saved StsCli.json to import').option('--force', 'Replace already-configured destination state')
     .action(async opts => {
       let imported;
@@ -217,9 +225,9 @@ export function createProgram(store = new StateStore(), setExit: (code: number) 
   });
   return root;
 }
-export async function main(argv = process.argv): Promise<number> {
+export async function main(argv = process.argv, store = new StateStore()): Promise<number> {
   let exitCode = 0;
-  const root = createProgram(new StateStore(), code => { exitCode = code; });
+  const root = createProgram(store, code => { exitCode = code; });
   try { await root.parseAsync(argv); return exitCode; }
   catch (e) {
     if (e instanceof CommanderError) return e.exitCode === 0 ? 0 : Exit.usage;

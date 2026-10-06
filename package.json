@@ -10,7 +10,7 @@
   "bugs": { "url": "https://github.com/mbundgaard/sts-cli/issues" },
   "keywords": ["oracle", "simphony", "sts", "cli", "pos", "typescript"],
   "bin": { "sts": "bin/sts.js" },
-  "files": ["bin/", "dist/", "README.md", "LICENSE", "CHANGELOG.md", "CONTRIBUTING.md", "SECURITY.md", "CODE_OF_CONDUCT.md", "docs/CLI.md", "docs/AUTHENTICATION.md", "docs/MIGRATION.md", "docs/DEVELOPMENT.md"],
+  "files": ["bin/", "dist/", "README.md", "LICENSE", "CHANGELOG.md", "CONTRIBUTING.md", "SECURITY.md", "CODE_OF_CONDUCT.md", "docs/CLI.md", "docs/AUTHENTICATION.md", "docs/DEVELOPMENT.md"],
   "engines": { "node": ">=22" },
   "publishConfig": { "access": "public" },
   "scripts": {

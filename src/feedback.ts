@@ -25,6 +25,7 @@ interface FeedbackState {
 interface SubmitOptions { message?: string; rating?: number; category?: string; url?: string; timeout?: number; quiet?: boolean; dryRun?: boolean; new?: boolean }
 const agentGuidance = [
   'Feedback is optional. Ask the user before submitting; never treat an error or reminder as consent.',
+  'For direct or sensitive security support, contact support@muneris.dk instead of ordinary feedback. Never email passwords, tokens or unreviewed customer data.',
   'When a reminder is due, offer a brief message or a 1-5 rating, with skip/snooze/disable choices. Record the question with sts feedback asked. Do not repeatedly ask after a decline.',
   'If you notice a likely CLI bug or recurring agent confusion, you may offer a report even before a reminder is due. Distinguish suspected bugs, configuration issues and verified defects. Do not interrupt urgent work or repeat a declined suggestion.',
   'Propose a short sanitized summary: expected behavior, actual behavior, minimal reproduction and uncertainty. Show the intended text/rating to the user and get approval before sending.',
@@ -73,24 +74,21 @@ function rating(value: string): number {
 
 // Separate from authentication state: usage counters never rewrite or transmit tokens.
 export class FeedbackStore {
-  readonly directory: string;
-  readonly file: string;
-  constructor(directory: string, readonly version: string, readonly env: NodeJS.ProcessEnv = process.env) {
-    this.directory = path.join(directory, 'feedback');
-    this.file = path.join(this.directory, 'Feedback.json');
-  }
+  constructor(private readonly stateDirectory: string, readonly version: string) {}
+  get directory(): string { return path.join(this.stateDirectory, 'feedback'); }
+  get file(): string { return path.join(this.directory, 'Feedback.json'); }
   private async load(): Promise<FeedbackState> {
     let text: string;
     try { text = await readFile(this.file, 'utf8'); }
     catch (e) {
-      if ((e as NodeJS.ErrnoException).code === 'ENOENT') return { schemaVersion: 1, reminders: false, successfulRequests: 0, submissions: [] };
+      if ((e as NodeJS.ErrnoException).code === 'ENOENT') return { schemaVersion: 1, reminders: true, successfulRequests: 0, submissions: [] };
       throw new CliError(Exit.state, `Cannot read private feedback state at ${this.file}`);
     }
     try {
       const s: unknown = JSON.parse(text);
       if (!object(s) || s.schemaVersion !== 1 || typeof s.reminders !== 'boolean' || !Number.isSafeInteger(s.successfulRequests) || (s.successfulRequests as number) < 0 || !Array.isArray(s.submissions)) throw new Error();
       for (const key of ['startedAt','lastAskedAt','snoozedUntil']) if (s[key] !== undefined && !timestamp(s[key])) throw new Error();
-      if (s.reminders && !s.startedAt) throw new Error();
+      if ((s.successfulRequests as number) > 0 && !s.startedAt) throw new Error();
       if (s.baseUrl !== undefined && (typeof s.baseUrl !== 'string' || feedbackUrl(s.baseUrl) !== s.baseUrl)) throw new Error();
       const ids = new Set<string>();
       for (const record of s.submissions) {
@@ -124,7 +122,7 @@ export class FeedbackStore {
     try { await lock.writeFile(JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() })); return await action(await this.load()); }
     finally { await lock.close(); await unlink(lockPath); }
   }
-  private url(state: FeedbackState, override?: string): string { return feedbackUrl(override ?? this.env.STS_FEEDBACK_URL ?? state.baseUrl ?? feedbackDefaultUrl); }
+  private url(state: FeedbackState, override?: string): string { return feedbackUrl(override ?? state.baseUrl ?? feedbackDefaultUrl); }
   async status(now = new Date()) {
     const s = await this.load();
     return { baseUrl: this.url(s), remindersEnabled: s.reminders, feedbackDue: due(s, now), successfulRequests: s.successfulRequests,
@@ -140,7 +138,7 @@ export class FeedbackStore {
     await this.locked(async s => {
       if (baseUrl !== undefined) s.baseUrl = baseUrl;
       if (options.reminders !== undefined) {
-        if (options.reminders === 'on' && !s.reminders) { s.startedAt = now.toISOString(); s.successfulRequests = 0; }
+        if (options.reminders === 'on' && (!s.reminders || !s.startedAt)) { s.startedAt = now.toISOString(); s.successfulRequests = 0; }
         s.reminders = options.reminders === 'on';
       }
       await this.save(s);
@@ -159,6 +157,7 @@ export class FeedbackStore {
     if (!(await this.load()).reminders) return false;
     return this.locked(async s => {
       if (!s.reminders) return false;
+      s.startedAt ??= now.toISOString();
       s.successfulRequests = Math.min(Number.MAX_SAFE_INTEGER, s.successfulRequests + 1);
       const ask = interactive && due(s, now);
       if (ask) s.lastAskedAt = now.toISOString();
@@ -247,16 +246,16 @@ export class FeedbackStore {
 
 export function registerFeedback(root: Command, store: FeedbackStore): void {
   const group = root.command('feedback').description('Optional product feedback and ratings; no STS data collection; never auto-submits')
-    .addHelpText('after', '\nFor agents: sts feedback status returns reminder eligibility and consent/privacy guidance.\nOffer suspected CLI bugs or repeated agent confusion as optional reports; show a sanitized summary and ask before sending.\nQuick start: sts feedback submit --rating 5 --message "Helpful CLI" --dry-run\nAfter user approval, omit --dry-run to send. No authentication or STS configuration needed.\nReminders are off by default. Enable: sts feedback config --reminders on\nFirst reminder: after 7 days or 25 successful STS calls; subsequent reminders: at least 30 days apart.\n');
+    .addHelpText('after', '\nFor agents: sts feedback status returns reminder eligibility and consent/privacy guidance.\nOffer suspected CLI bugs or repeated agent confusion as optional reports; show a sanitized summary and ask before sending.\nDirect support: support@muneris.dk. Never email passwords, tokens or unreviewed customer data.\nQuick start: sts feedback submit --rating 5 --message "Helpful CLI" --dry-run\nAfter user approval, omit --dry-run to send. No authentication or STS configuration needed.\nReminders are on by default for new profiles. Disable: sts feedback config --reminders off\nFirst reminder: after 7 days or 25 successful STS calls; subsequent reminders: at least 30 days apart.\n');
   group.action(() => group.outputHelp());
   const network = (cmd: Command, url = true) => {
-    if (url) cmd.option('--url <base-url>', 'Override feedback base URL; otherwise STS_FEEDBACK_URL, saved URL, then deployed default');
+    if (url) cmd.option('--url <base-url>', 'Override feedback base URL; otherwise saved URL, then deployed default');
     return cmd.option('--timeout <seconds>', 'Bounded timeout (1-120); no automatic retries', timeout, 15).option('-q, --quiet', 'Suppress progress messages');
   };
   group.command('status').description('[read-only][local] Reminder state, saved submission IDs and agent guidance; no network').action(async () => localResult('feedback status', await store.status()));
-  group.command('config').description('[writes-state][local] Feedback URL and opt-in reminders; separate from auth state')
+  group.command('config').description('[writes-state][local] Feedback URL and local reminders; separate from auth state')
     .option('--url <base-url>', 'Save feedback base URL; HTTPS or HTTP loopback, no credentials/query/fragment')
-    .option('--reminders <on|off>', 'Enable or disable local reminder tracking; default off')
+    .option('--reminders <on|off>', 'Enable or disable local reminder tracking; default on for new profiles')
     .action(async opts => localResult('feedback config', Object.keys(opts).length ? await store.configure(opts) : await store.status()));
   group.command('asked').description('[writes-state][local] Agent: record that you asked; suppress reminders for 30 days; sends nothing')
     .action(async () => { await store.asked(); localResult('feedback asked', { recorded: true, submitted: false }); });

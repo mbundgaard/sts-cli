@@ -47,7 +47,7 @@ export class AuthClient {
     };
   }
   async login(auth: AuthConfig, password: string): Promise<TokenSet> {
-    if (!password) throw new CliError(Exit.usage, 'Supply --password or STS_PASSWORD');
+    if (!password) throw new CliError(Exit.usage, 'Supply --password');
     requireAuth(auth, true);
     const { verifier, challenge } = pkce();
     const base = auth.authUrl!.replace(/\/$/, '') + '/oidc-provider/v1/oauth2';

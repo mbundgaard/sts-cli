@@ -1,0 +1,13 @@
+{
+  "name": "STS CLI",
+  "icon": "terminal",
+  "features": ["AI-enabled", "Cross-platform", "npm"],
+  "description": "Oracle Simphony STS Gen2 from your terminal: authentication, explicit requests and unchanged STS responses.",
+  "order": 4,
+  "runtime": "Node.js 22+ (Windows, macOS, Linux)",
+  "license": "MIT",
+  "distribution": { "type": "npm", "package": "@muneris/sts-cli" },
+  "source": "https://github.com/mbundgaard/sts-cli",
+  "support": "support@muneris.dk",
+  "screenshots": []
+}

@@ -2,6 +2,13 @@
 
 Run `sts <group> <command> --help` for exact options. Placeholder values below must be replaced. Commands labelled **DESTRUCTIVE** affect the POS; preview the request with `--dry-run` first.
 
+Configuration, tokens and feedback state are shared automatically per OS user.
+Windows uses `C:\Users\<user>\AppData\Roaming\StsCli`; see the
+[authentication guide](AUTHENTICATION.md#state-storage) for other platforms.
+There is no directory override.
+The `auth env` command and `auth config --env` select Oracle deployment presets,
+not shell configuration.
+
 ## Local and authentication commands
 
 | Command | Purpose |
@@ -9,23 +16,56 @@ Run `sts <group> <command> --help` for exact options. Placeholder values below m
 | `sts --help` | Discover commands |
 | `sts --version` | Plain version string |
 | `sts version` | JSON containing npm version and Node/platform information |
+| `sts version --check` | Explicit read-only npm update check; advisory, never installs |
 | `sts endpoints` | JSON catalog of supported GET endpoints |
 | `sts auth env` | Available environment presets |
 | `sts auth config` | Show configuration, without changing it |
-| `sts auth config --env <env> --org <org> --username <user> --client-id <id>` | Configure and clear stale tokens if identity/endpoints change |
+| `sts auth config --env <env> --username <user> --client-id <id>` | Configure and clear stale tokens if identity/endpoints change |
 | `sts auth config --env custom --auth-url <url> --sts-url <url> ...` | Custom deployment |
-| `sts auth login` | PKCE login using `STS_PASSWORD` or `--password`; saves tokens |
+| `sts auth login` | PKCE login using `--password`; saves tokens |
 | `sts auth refresh` | Explicit refresh and persistent token rotation |
 | `sts auth status` | Local token presence and expiry (default for `sts auth`) |
 | `sts auth show` | Effective configuration plus token summary |
 | `sts auth restore --file <path> [--force]` | Import existing state without contacting Oracle |
 | `sts auth logout` | Clear tokens locally, not server-side revocation |
 
+The organization is always derived from the Base64 client ID (`<organization>.<UUID>`
+when decoded), including when loading saved/imported state. There is no organization
+override. The original client ID is passed unchanged to Oracle.
+
 Login accepts `--username` to override the saved user. Login/refresh accept `--quiet` and `--timeout <seconds>`. State-changing commands lock and save state; do not run another client against the same token simultaneously.
+
+## Update checks and support
+
+`sts version --check` adds `data.update` to the local version JSON. It contains
+`installedVersion`, `latestVersion` when verified, `checkStatus` (`up-to-date`,
+`update-available`, `ahead`, or `unavailable`), `updateAvailable`, registry URL and
+an explanatory message. When newer, `updateCommand` suggests a version-pinned
+`npm install --global @muneris/sts-cli@<version>` command. No command is executed.
+Version precedence follows SemVer, including prereleases; build metadata does not
+change precedence. Ahead-of-registry installations are not told to downgrade.
+
+The explicit lookup contacts only npm's public `latest` metadata endpoint over
+verified HTTPS with a 5-second timeout, no retries, redirects or authentication.
+It does not read/save token state or cache results. Network/registry/metadata errors
+produce `checkStatus: "unavailable"`, `updateAvailable: null` and exit 0, not a false
+up-to-date result. This advisory cannot interfere with STS calls: ordinary commands
+never invoke it. `sts --version` and plain `sts version` remain completely local.
+
+Agents: check once per session, notify if newer and get approval before updating.
+Do not repeatedly check, interrupt active writes, or use a global install command
+for an installation managed another way. An unavailable result should not block
+other work. Users can also compare versions with `npm view @muneris/sts-cli version`.
+
+Direct support: [support@muneris.dk](mailto:support@muneris.dk). Include a version
+and sanitized description, never passwords, tokens or unreviewed customer data.
+Sensitive security reports belong in the private channel described in
+[SECURITY.md](../SECURITY.md), not ordinary product feedback.
 
 ## Read endpoints
 
-All calls require configured organization and a usable token unless `--dry-run` is used.
+All calls require a configured client ID, from which organization addressing is derived.
+A usable token is also required unless `--dry-run` is used.
 
 | Command | Required options | Addressing |
 |---|---|---|
@@ -212,8 +252,8 @@ before submitting. Never automatically attach diagnostics or source/response dum
 
 ### Persistence and duplicate safety
 
-A private `feedback/Feedback.json` beneath the platform state directory (or
-`STS_HOME`) holds preferences, counters and saved messages. It is separate from
+A private `feedback/Feedback.json` beneath the fixed per-user application-data
+directory holds preferences, counters and saved messages. It is separate from
 authentication state. The complete intent is saved **before** POST. Network failure
 or timeout leaves the content and ID available locally; failure to save prevents a
 new POST. A failed receipt save after a POST may leave `sending` state with an
@@ -242,8 +282,7 @@ remote deletion or management UI. Saved history remains local until discarded.
 ### URL, health and reminders
 
 Default URL: `https://feedback.muneris.cloud/`. Resolution precedence is
-per-call `--url` (submit/health), `STS_FEEDBACK_URL`, saved `feedback config --url`,
-then the default. Custom base paths are retained. HTTPS is required except HTTP to
+per-call `--url` (submit/health), saved `feedback config --url`, then the default. Custom base paths are retained. HTTPS is required except HTTP to
 `localhost`, `127.0.0.1` or `[::1]` for testing. Credentials, queries and fragments in
 URLs are rejected. Retry deliberately has no URL override.
 
@@ -251,9 +290,12 @@ GET `<base-url>/health` must return HTTP 200 with `{"status":"ok"}`. It proves
 **liveness only**, not that storage works. A real POST smoke test creates a row;
 local development tests use synthetic mocks instead.
 
-Reminders are off by default. After opt-in, successful STS calls (including quiet
-calls) increment a local counter; dry-runs, failures, auth and feedback commands do
-not. First eligibility is 7 days after enabling or 25 recorded successful calls.
+Reminders are on by default for new profiles; existing saved settings, including
+`off`, are respected. While enabled, successful STS calls (including quiet calls)
+increment a local counter; dry-runs, failures, auth and feedback commands do not.
+The timer starts with the first recorded successful STS call or explicit enabling.
+First eligibility is 7 days later or 25 recorded successful calls. Read-only status
+and previews do not create state or start the timer.
 After asking/submitting, at least 30 days must pass. Snooze supports 1-365 days;
 the 30-day post-question cooldown still applies. Turning reminders off stops local
 usage updates. Counters/timestamps never leave the machine.
@@ -268,4 +310,4 @@ not overwrite corrupt state or change the STS operation's result.
 
 ## Deliberate exclusions in this first TypeScript release
 
-No generic arbitrary-URL command; no notification registration/subscription commands; no automatic refresh/retry/pagination; no response shaping or charged-tip verification; no invocation-body logging; no `version --check` Windows download feed. SQL database access is not part of this CLI.
+No generic arbitrary-URL command; no notification registration/subscription commands; no automatic refresh/retry/pagination; no response shaping or charged-tip verification; no invocation-body logging; no automatic self-updater or native executable download feed. SQL database access is not part of this CLI.
