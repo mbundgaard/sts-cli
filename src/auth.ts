@@ -54,9 +54,12 @@ export class AuthClient {
     const query = new URLSearchParams({ client_id: auth.clientId!, code_challenge: challenge,
       code_challenge_method: 'S256', redirect_uri: redirectUri, response_type: 'code', scope });
     await this.send(`${base}/authorize?${query}`);
+    // Oracle supplies OAuth cookies during authorize. Preserve their exact values:
+    // rewriting a padded client ID as %3D%3D can make signin reject the client.
+    const supplied = new Set((await this.cookies.getCookies(`${base}/signin`)).map(cookie => cookie.key));
     for (const [key, value] of Object.entries({ client_id: auth.clientId!, code_challenge: challenge,
       code_challenge_method: 'S256', redirect_uri: redirectUri, response_type: 'code' })) {
-      await this.cookies.setCookie(new Cookie({ key, value: encodeURIComponent(value), path: '/' }), auth.authUrl!);
+      if (!supplied.has(key)) await this.cookies.setCookie(new Cookie({ key, value: encodeURIComponent(value), path: '/' }), auth.authUrl!);
     }
     const signedIn = this.parse(await this.send(`${base}/signin`, {
       username: auth.username!, password, orgname: auth.orgName!,

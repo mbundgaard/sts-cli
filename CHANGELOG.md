@@ -2,6 +2,13 @@
 
 Notable changes are documented here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## 0.4.1 - 2026-10-06
+
+- Fix fresh login by preserving OAuth cookies returned by Oracle's authorize
+  endpoint. Overwriting them with encoded values could cause sign-in HTTP 400,
+  including when the client ID contains Base64 padding. Saved-token refresh was
+  unaffected. Add regression coverage for server-supplied cookies and 303 responses.
+
 ## 0.4.0 - 2026-10-06
 
 - Add provider-owned catalog export and synchronization: STS selects published

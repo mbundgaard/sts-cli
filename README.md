@@ -38,7 +38,7 @@ For the current source checkout:
 npm ci
 npm test
 npm pack
-npm install --global ./muneris-sts-cli-0.4.0.tgz
+npm install --global ./muneris-sts-cli-0.4.1.tgz
 sts --help
 ```
 

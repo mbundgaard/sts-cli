@@ -153,19 +153,26 @@ test('refresh persists rotation and never outputs tokens', async t => {
   assert.equal(tokens.refreshToken, 'rotated-refresh'); assert.equal(tokens.accessToken, 'rotated-access');
   assert.ok(!result.stdout.toString().includes('rotated-access'));
 });
-test('login uses cookies, PKCE and preserves padded client ID', async t => {
+for (const suppliedCookies of [false, true]) test(`login uses cookies, PKCE and preserves padded client ID (server OAuth cookies: ${suppliedCookies})`, async t => {
   let challenge;
   const s = await setup(t, async (req, res) => {
     const url = new URL(req.url, 'http://test');
     if (url.pathname.endsWith('/authorize')) {
       assert.equal(url.searchParams.get('client_id'), testClientId);
       challenge = url.searchParams.get('code_challenge');
-      res.setHeader('Set-Cookie', 'session=test-session; Path=/'); res.end('login'); return;
+      res.setHeader('Set-Cookie', [
+        'session=test-session; Path=/',
+        ...(suppliedCookies ? [`client_id=${testClientId}; Path=/; HttpOnly`, 'redirect_uri=apiaccount://callback; Path=/'] : []),
+      ]);
+      res.statusCode = 303; res.setHeader('Location', '/login'); res.end('login'); return;
     }
     const chunks = []; for await (const c of req) chunks.push(c);
     const form = new URLSearchParams(Buffer.concat(chunks).toString());
     if (url.pathname.endsWith('/signin')) {
-      assert.match(req.headers.cookie, /session=test-session/); assert.ok(req.headers.cookie.includes('client_id=' + encodeURIComponent(testClientId)));
+      assert.match(req.headers.cookie, /session=test-session/);
+      const cookies = req.headers.cookie.split('; ').filter(cookie => cookie.startsWith('client_id='));
+      assert.deepEqual(cookies, ['client_id=' + (suppliedCookies ? testClientId : encodeURIComponent(testClientId))]);
+      if (suppliedCookies) assert.ok(req.headers.cookie.includes('redirect_uri=apiaccount://callback'));
       assert.equal(form.get('orgname'), 'test-org-padded');
       assert.equal(form.get('password'), 'mock-password');
       res.end(JSON.stringify({ nextOp: 'redirect', redirectUrl: 'apiaccount://callback?code=mock-code' })); return;
