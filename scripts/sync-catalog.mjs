@@ -9,7 +9,7 @@ async function json(url) {
   if (!response.ok) throw new Error(`Metadata lookup failed: HTTP ${response.status}`);
   return response.json();
 }
-const metadata = await json('https://registry.npmjs.org/@muneris%2Fsts-cli/latest');
+const metadata = await json('https://registry.npmjs.org/@muneris%2fsts-cli/latest');
 if (metadata.name !== '@muneris/sts-cli' || !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(metadata.version)) throw new Error('Expected a published stable STS version');
 const release = await json(`https://api.github.com/repos/mbundgaard/sts-cli/releases/tags/v${metadata.version}`);
 if (release.draft || release.prerelease || !release.published_at || release.tag_name !== `v${metadata.version}`) throw new Error('Expected matching published GitHub release');
