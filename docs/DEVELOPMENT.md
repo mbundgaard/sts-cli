@@ -155,9 +155,10 @@ records the resolved commit, rejects version downgrades/moved recorded tags, and
 opens or updates a PR replacing **only** `site/tools/sts-cli/`. Human review/merge
 triggers the existing Pages deployment. STS main is never used as published docs.
 
-The `0.3.0` tag predates the exporter and is deliberately skipped. The first new
-release containing this wiring will supply the new npm catalog entry; its changelog
-must have a matching version heading and no unpublished notes under `Unreleased`.
+The `0.3.0` tag predates the exporter and is deliberately skipped. Its npm catalog
+entry was bootstrapped from the verified published release commit, not from main.
+The next release containing this wiring resumes automated catalog updates; its
+changelog must have a matching version heading and no unpublished notes under `Unreleased`.
 The npm version remains authoritative while the site PR awaits review.
 
 For optional images, add reviewed public PNG/JPEG/GIF/WebP/AVIF files under
