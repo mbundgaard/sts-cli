@@ -5,11 +5,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const sourceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const documents = [
   ['README.md', 'README.md', 'Overview', 1],
-  ['docs/CLI.md', 'CLI.md', 'Command reference', 2],
+  ['docs/CLI.md', 'CLI.md', 'Commands', 2],
   ['docs/AUTHENTICATION.md', 'AUTHENTICATION.md', 'Authentication', 3],
-  ['SECURITY.md', 'SECURITY.md', 'Security', 4],
-  ['CONTRIBUTING.md', 'CONTRIBUTING.md', 'Contributing', 5],
-  ['docs/DEVELOPMENT.md', 'DEVELOPMENT.md', 'Development', 6],
   ['CHANGELOG.md', 'CHANGELOG.md', 'Changelog', 100],
 ];
 async function safeSource(root, relative) {
@@ -61,6 +58,10 @@ export async function exportCatalog(root, output, release) {
     version: release.version, date: release.date,
     url: 'https://www.npmjs.com/package/@muneris/sts-cli',
     install: `npm install --global @muneris/sts-cli@${release.version}`,
+    actions: [
+      { type: 'command', label: 'Install with npm', text: `npm install --global @muneris/sts-cli@${release.version}` },
+      { type: 'link', label: 'View on npm', url: 'https://www.npmjs.com/package/@muneris/sts-cli' },
+    ],
     sourceCommit: release.sourceCommit,
     source: `https://github.com/mbundgaard/sts-cli/tree/${release.sourceCommit}`,
   }, null, 2) + '\n');

@@ -2,11 +2,12 @@
 
 Notable changes are documented here. Versions follow [Semantic Versioning](https://semver.org/).
 
-## Unreleased
+## 0.4.0 - 2026-10-06
 
-- Add allowlisted, release-tagged MunerisTools catalog export with npm metadata,
-  documentation tabs and explicitly reviewed optional screenshots. The companion
-  site workflow opens a reviewed update PR rather than publishing unreleased docs.
+- Add provider-owned catalog export and synchronization: STS selects published
+  releases, documentation tabs (Overview, Commands, Authentication, Changelog),
+  installation actions and explicitly reviewed optional screenshots. MunerisTools
+  only transports and renders the generic provider contract.
 
 - Remove `--org`. Derive organization exclusively from the Base64 client ID's
   `<organization>.<UUID>` format, including saved/imported state; preserve the

@@ -144,16 +144,24 @@ local tests alone do not establish that a subsequent remote publication succeede
 
 STS owns its public content. `catalog/tool.json` supplies catalog-only metadata;
 `scripts/export-catalog.mjs` exports a fixed allowlist of README, changelog and guides
-with tab frontmatter, plus generated npm release metadata. Relative documentation
+with four tabs (Overview, Commands, Authentication, Changelog), plus generated npm
+release metadata. Security, contributing and development guides remain in the source
+repository and are not separate catalog tabs. Relative documentation
 links are anchored to the matching release commit. No duplicate documentation tree is
 maintained, and none of these development scripts/catalog inputs enter the npm package.
 
-MunerisTools' `sync-sts.yml` runs hourly or manually. It reads npm's stable `latest`,
-requires the matching published GitHub release, checks out that exact tag and runs
-its exporter into a fresh staging directory. It verifies npm `gitHead` when provided,
-records the resolved commit, rejects version downgrades/moved recorded tags, and
-opens or updates a PR replacing **only** `site/tools/sts-cli/`. Human review/merge
-triggers the existing Pages deployment. STS main is never used as published docs.
+MunerisTools' generic `sync-providers.yml` runs hourly or manually and invokes our
+registered `scripts/sync-catalog.mjs` from main. All STS-specific release logic is here:
+we read npm's stable `latest`, require the matching published GitHub release, check out
+that exact tag and run its exporter into a new output directory. We verify npm `gitHead`
+when provided, record the resolved commit and reject downgrades/moved recorded tags.
+Main supplies orchestration code, never unpublished CLI documentation. The generic
+consumer validates/transports our bundle and opens a reviewed catalog PR; merge triggers
+Pages deployment. No STS/npm logic or STS-specific tests belong in the site renderer.
+
+Our exporter supplies the exact install command, button labels/URLs and agent guidance.
+The site merely renders `release.json.actions` (command text or HTTPS link). It does not
+construct npm commands, infer versions or decide which STS docs to display.
 
 The `0.3.0` tag predates the exporter and is deliberately skipped. Its npm catalog
 entry was bootstrapped from the verified published release commit, not from main.
@@ -171,7 +179,7 @@ are not copied. Symlinks and traversing image paths are rejected.
 MunerisTools needs GitHub Actions permission to create pull requests (repository
 Settings > Actions > General > Workflow permissions). Its own `GITHUB_TOKEN` is used;
 no cross-repository PAT or new secret is needed. Scheduled workflows can be delayed
-or disabled after inactivity; use **Sync published STS catalog > Run workflow** to
+or disabled after inactivity; use **Sync provider catalogs > Run workflow** to
 check explicitly. This is reviewed publication, not automatic installation or release.
 
 ### Manual fallback

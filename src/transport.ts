@@ -22,7 +22,7 @@ export function validateUrl(input: string): URL {
 export async function request(input: HttpRequest): Promise<HttpResponse> {
   const url = validateUrl(input.url);
   return new Promise((resolve, reject) => {
-    const headers = { 'User-Agent': 'StsCli-TypeScript/0.3', 'Accept-Encoding': 'identity', ...input.headers };
+    const headers = { 'User-Agent': 'StsCli-TypeScript/0.4', 'Accept-Encoding': 'identity', ...input.headers };
     const client = url.protocol === 'https:' ? https : http;
     const req = client.request(url, { method: input.method, headers, rejectUnauthorized: !input.insecure }, res => {
       const chunks: Buffer[] = [];

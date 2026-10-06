@@ -28,6 +28,11 @@ test('catalog exports only allowlisted files, adds tab metadata and immutable ve
   assert.deepEqual((await readdir(out)).sort(), [...documents.map(d => d[1]), 'tool.json', 'release.json'].sort());
   const metadata = JSON.parse(await readFile(path.join(out, 'release.json'), 'utf8'));
   assert.equal(metadata.install, 'npm install --global @muneris/sts-cli@1.2.3');
+  assert.deepEqual(documents.map(d => d[2]), ['Overview', 'Commands', 'Authentication', 'Changelog']);
+  assert.deepEqual(metadata.actions, [
+    { type: 'command', label: 'Install with npm', text: metadata.install },
+    { type: 'link', label: 'View on npm', url: 'https://www.npmjs.com/package/@muneris/sts-cli' },
+  ]);
   assert.equal(metadata.sourceCommit, release.sourceCommit);
   const readme = await readFile(path.join(out, 'README.md'), 'utf8');
   assert.match(readme, /^---\ntitle: Overview\norder: 1\n---/);

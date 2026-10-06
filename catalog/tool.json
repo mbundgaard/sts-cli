@@ -9,5 +9,6 @@
   "distribution": { "type": "npm", "package": "@muneris/sts-cli" },
   "source": "https://github.com/mbundgaard/sts-cli",
   "support": "support@muneris.dk",
+  "agentGuidance": "Run sts --help and sts endpoints to discover commands. STS API response bytes pass unchanged to stdout; local commands return JSON, diagnostics go to stderr. Check npm for the current published version; ask before installing updates.",
   "screenshots": []
 }
