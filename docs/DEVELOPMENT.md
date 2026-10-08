@@ -37,21 +37,56 @@ and the installed modules with an isolated store for stateful checks.
 |---|---|
 | `cli.ts` | Command tree, help, handlers |
 | `auth.ts` | PKCE, cookies, login, refresh |
-| `state.ts` | State paths, validation, compatibility, locked atomic saves |
+| `state.ts` | Version-2 company registry, legacy migration, profile snapshots, paths and locked atomic saves |
+| `companies.ts` | Exact-key company commands, guarded login, expiry cleanup and persisted per-profile renewal scheduling |
 | `identity.ts` | Derive organization from the Base64 client ID without modifying the original ID |
 | `endpoints.ts` | Declarative read endpoint catalog |
 | `requests.ts` | Input validation and request construction |
 | `json.ts` | Node 22+ source-aware request JSON parsing; preserve numeric precision, never parse STS responses |
-| `transport.ts` | HTTP(S), compression decoding, raw body transport |
+| `transport.ts` | Shared HTTP(S) streaming and compression decoding; buffered internal auth/feedback/update API |
+| `responses.ts` | Automatic verbatim inline/file delivery above 16 KiB or 500 lines; private storage and receipts |
 | `examples.ts` | Minimal structured request templates |
 | `output.ts` | Local JSON results, errors and exit codes |
 | `diagnostics.ts` | Certificate-failure guidance, explicit user-confirmation requirement, write-uncertainty hints |
 | `feedback.ts` | Separate unauthenticated feedback service, private outbox/history, local configurable reminders and agent guidance |
-| `updates.ts` | Explicit advisory npm lookup and SemVer comparison; no installation or STS side effects |
+| `updates.ts` | Advisory npm lookup, SemVer comparison and daily post-success stderr notices; isolated schedule, no installation |
 
 Keep STS response JSON parsing out of the transport/execution path. Test Buffer equality,
 not just parsed JSON equivalence: whitespace, numeric representations and trailing
-newlines must survive unchanged. An interrupted body must not look complete.
+newlines must survive unchanged, either inline or in the referenced file. An interrupted
+body must not look complete. Large-response tests stream 128 MiB plain/compressed data,
+verify hashes, boundaries, private permissions, cancellation and disk-failure cleanup.
+All STS reads/calculator/writes share this handler. Preserve TLS diagnostics and write
+uncertainty for transport, storage and output failures. Never retry a write to recover
+its response. Auth/feedback/update outputs are not exported through this mechanism.
+
+Automatic update notices run after successful non-quiet STS delivery, with a
+1-second registry timeout and a separate daily reservation file. Never couple
+notification errors to an STS exit code or auth persistence. Test registry access
+through injected checkers; unpackaged CLI test runners disable real registry calls.
+Local/help/dry-run and failed STS calls must not trigger automatic checks.
+
+## Company state and renewal
+
+Production mutations use `mutateCompanies` and atomic whole-registry persistence.
+Request/auth builders receive only one coherent profile, never the full registry.
+The API wrapper captures the active key, validates the request without network,
+runs due-only maintenance and rebuilds against that same key's refreshed profile.
+A concurrent selection cannot change the invocation's company. No request is retried.
+
+Normal config prepares login separately from saved profiles. Login commits/selects
+only on success; a same-company/hostname/username duplicate reports saved expiry.
+Selection discards prepared configuration; deletion clears it only if it matches.
+Successful login/refresh schedules +24h; Oracle failure schedules +1h. Expiry is
+checked first and removes the entire token set rather than attempting recovery.
+Manual refresh bypasses schedules for all profiles. Missing expiry is not guessed.
+Maintenance rechecks under the lock and persists each company before continuing.
+Keep persistence errors outside the Oracle-failure catch so rotated-token recovery
+is retained and local save failures cannot be treated as retry/backoff events.
+
+Offline tests cover migration, exact-key collisions, login failure/duplicates,
+selection/deletion, profile-isolated rotation, schedule/backoff boundaries, expiry,
+unknown metadata, pinned selection and full-registry recovery after save failure.
 
 ## Testing boundaries
 

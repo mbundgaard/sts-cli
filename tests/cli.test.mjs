@@ -181,6 +181,7 @@ for (const suppliedCookies of [false, true]) test(`login uses cookies, PKCE and 
     assert.equal(createHash('sha256').update(form.get('code_verifier')).digest('base64url'), challenge);
     res.end(JSON.stringify({ access_token: 'login-access', refresh_token: 'login-refresh', expires_in: 3600 }));
   });
+  await s.store.mutate(async state => { delete state.tokens; });
   const result = await s.run(['auth','login','--password','mock-password']);
   assert.equal(result.code, 0, result.stderr);
   assert.equal((await s.store.load()).tokens.refreshToken, 'login-refresh');
@@ -222,12 +223,13 @@ test('separate invocations reuse saved auth and feedback state, with no CLI dire
 test('login requires an explicit password argument and makes no call when absent', async t => {
   let calls = 0;
   const s = await setup(t, (_, res) => { calls++; res.end(); });
+  await s.store.mutate(async state => { delete state.tokens; });
   const result = await s.run(['auth','login']);
   assert.equal(result.code, 6);
   assert.match(result.stderr, /Supply --password/);
   assert.equal(calls, 0);
 });
-test('config derives organization, rejects --org and malformed IDs, and clears tokens on client-ID changes', async t => {
+test('config derives organization, rejects --org/malformed IDs, and stages client-ID changes without candidate tokens', async t => {
   const s = await setup(t, () => { throw new Error('Configuration must remain local'); });
   const before = await readFile(s.store.file, 'utf8');
   const rejected = await s.run(['auth','config','--org','override']);
@@ -292,7 +294,7 @@ test('timeout never retries a write', async t => {
   const result = await s.run(['check','new','--location','test-loc','--rvc','1','--employee','3','--order-type','1','--body','{}','--timeout','1']);
   assert.equal(result.code, 10); assert.equal(calls, 1); assert.equal(result.stdout.length, 0); assert.match(result.stderr, /uncertain/);
 });
-test('refresh without a new refresh token retains the old token; rejection preserves state', async t => {
+test('refresh without a new refresh token retains the old token; rejection preserves tokens with backoff', async t => {
   let fail = false;
   const s = await setup(t, (_, res) => {
     if (fail) { res.writeHead(401); res.end('rejected'); }
@@ -300,13 +302,15 @@ test('refresh without a new refresh token retains the old token; rejection prese
   });
   assert.equal((await s.run(['auth','refresh'])).code, 0);
   assert.equal((await s.store.load()).tokens.refreshToken, 'test-refresh');
-  const before = await readFile(s.store.file);
+  const before = (await s.store.load()).tokens;
   fail = true;
   const result = await s.run(['auth','refresh']);
-  assert.equal(result.code, 9); assert.equal(result.stdout.length, 0);
-  assert.deepEqual(await readFile(s.store.file), before);
+  assert.equal(result.code, 9); assert.equal(JSON.parse(result.stdout).data.companies[0].status, 'failed');
+  assert.deepEqual((await s.store.load()).tokens, before);
+  const registry = await s.store.loadCompanies();
+  assert.ok(Date.parse(registry.companies[registry.activeCompany].refreshAfter) > Date.now());
 });
-test('configuration changes clear tokens and the CLI version matches package metadata', async t => {
+test('configuration changes have no candidate tokens and the CLI version matches package metadata', async t => {
   const s = await setup(t, (_, res) => res.end());
   assert.equal((await s.run(['auth','config','--username','new-user'])).code, 0);
   assert.equal((await s.store.load()).tokens, undefined);

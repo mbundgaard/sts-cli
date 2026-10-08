@@ -2,6 +2,59 @@
 
 Notable changes are documented here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## 0.5.0 - 2026-10-08
+
+- Automatically check npm after successful non-quiet STS API calls, at most once
+  per 24 hours with a 1-second network timeout. Notify on stderr only when newer;
+  preserve API stdout and exit codes. Failures stay silent, no updates install
+  automatically, and help/local/auth/dry-run commands never trigger the check.
+  Keep the schedule separate from credentials; explicit `version --check` bypasses it.
+
+- Add independent company profiles keyed by derived company code and lowercase IDM
+  hostname, with exact-key list/status/select/delete commands and safe legacy migration.
+  Login saves/selects on success; failed login preserves profiles. Duplicate same-user
+  logins report stored token status without another authentication request.
+- Prepare login configuration without clearing active tokens. Selection discards
+  unfinished configuration; logout clears only active-company tokens. Deleting the
+  active company clears selection rather than silently selecting another profile.
+- Before STS API commands, renew all due unexpired profiles: successful login/refresh
+  schedules +24 hours, failed renewal +1 hour while retaining valid tokens. Remove
+  expired token sets without refresh. Manual refresh checks all profiles now; help,
+  local commands and dry-runs stay offline. No daemon or STS retry.
+- Pin company identity per operation, recheck schedules under lock, and preserve
+  atomic rotated-token recovery separately from Oracle backoff. Add offline coverage
+  for migration, duplicate login, profile isolation, schedules, expiry and concurrency.
+
+- Centralize automatic verbatim response delivery for all STS reads, calculator and
+  check writes. Above 16 KiB or 500 decoded lines, stream the complete body to a
+  protected retained file and return a compact JSON reference. Smaller bodies stay
+  unchanged on stdout. No mode flags, agent detection or truncation.
+- Preserve API error exit codes, TLS restrictions/diagnostics, connection-status
+  headers and write-uncertainty warnings. Auth, feedback and updates remain separate.
+- Update agent/script guidance: large stdout responses now become file receipts,
+  including when redirected. Completed files remain until explicitly deleted.
+- Add large plain/compressed response, hash, boundary, private-permission and failure
+  regression tests. No retries or live POS writes are introduced.
+- Preserve rotated credentials when Oracle omits usable expiry metadata; report
+  unknown expiry instead of guessing a lifetime. Actual expiry uses Oracle's
+  returned lifetime, not an assumed fixed number of days.
+
+### Compatibility and validation
+
+- Scripts must handle compact file-reference JSON when a response exceeds either
+  inline limit, even with stdout redirected. The referenced body remains verbatim.
+- `auth refresh` now checks all saved profiles and reports per-company outcomes.
+  `auth config` prepares the next login rather than clearing active tokens.
+  State mutations persist schema version 2; older CLI versions cannot read it.
+  Keep protected backups before upgrading, but never refresh independent copies
+  of the same token set.
+- Offline regression coverage includes company migration/isolation, expiry,
+  renewal backoff, token persistence and response-delivery failures.
+- Authorized live read-only checks verified login for a second company, preservation
+  of the first profile, scheduled renewal of an inactive company, sequential
+  property listing after company selection, and large-response file delivery.
+  No POS writes were performed for this validation.
+
 ## 0.4.1 - 2026-10-06
 
 - Fix fresh login by preserving OAuth cookies returned by Oracle's authorize

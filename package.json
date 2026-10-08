@@ -1,6 +1,6 @@
 {
   "name": "@muneris/sts-cli",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "description": "Agent-first Oracle Simphony STS Gen2 CLI with raw API responses",
   "type": "module",
   "license": "MIT",
@@ -10,7 +10,7 @@
   "bugs": { "url": "https://github.com/mbundgaard/sts-cli/issues" },
   "keywords": ["oracle", "simphony", "sts", "cli", "pos", "typescript"],
   "bin": { "sts": "bin/sts.js" },
-  "files": ["bin/", "dist/", "README.md", "LICENSE", "CHANGELOG.md", "CONTRIBUTING.md", "SECURITY.md", "CODE_OF_CONDUCT.md", "docs/CLI.md", "docs/AUTHENTICATION.md", "docs/DEVELOPMENT.md"],
+  "files": ["bin/", "dist/", "README.md", "LICENSE", "CHANGELOG.md", "CONTRIBUTING.md", "SECURITY.md", "CODE_OF_CONDUCT.md", "docs/CLI.md", "docs/AUTHENTICATION.md", "docs/DEVELOPMENT.md", "docs/RESPONSES.md"],
   "engines": { "node": ">=22" },
   "publishConfig": { "access": "public" },
   "scripts": {

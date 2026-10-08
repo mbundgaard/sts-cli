@@ -1,4 +1,7 @@
 import { request } from './transport.js';
+import { mkdir, open, readFile, rename, unlink } from 'node:fs/promises';
+import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 
 export const updateRegistryUrl = 'https://registry.npmjs.org/@muneris%2Fsts-cli/latest';
 interface Version { core: bigint[]; prerelease: string[] }
@@ -31,15 +34,14 @@ export interface UpdateCheck {
   updateAvailable: boolean | null; updateCommand?: string; registryUrl: string;
   message: string;
 }
-// Explicit, advisory lookup only. No credentials, state writes, retries, redirects,
-// automatic installation or background calls from STS commands.
-export async function checkForUpdates(installedVersion: string, send: typeof request = request): Promise<UpdateCheck> {
+// Advisory lookup only. No credentials, retries, redirects or installation.
+export async function checkForUpdates(installedVersion: string, send: typeof request = request, timeoutMs = 5000): Promise<UpdateCheck> {
   const unavailable: UpdateCheck = { installedVersion, checkStatus: 'unavailable', updateAvailable: null, registryUrl: updateRegistryUrl,
     message: 'Could not verify the latest npm version. Continue with the installed CLI; this is not evidence that it is up to date.' };
   const installed = parseVersion(installedVersion);
   if (!installed) return unavailable;
   try {
-    const response = await send({ method: 'GET', url: updateRegistryUrl, headers: { Accept: 'application/json' }, timeoutMs: 5000 });
+    const response = await send({ method: 'GET', url: updateRegistryUrl, headers: { Accept: 'application/json' }, timeoutMs });
     if (response.status !== 200) return unavailable;
     const metadata: unknown = JSON.parse(response.body.toString('utf8'));
     if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return unavailable;
@@ -53,4 +55,44 @@ export async function checkForUpdates(installedVersion: string, send: typeof req
       message: order > 0 ? 'A newer npm version is available. Ask the user before updating; review release notes and do not interrupt active writes.'
         : order < 0 ? 'Installed version is ahead of the npm latest tag; no downgrade is recommended.' : 'Installed version matches the npm latest tag.' };
   } catch { return unavailable; }
+}
+
+// Reserve the next daily attempt before networking, including on failure/crash.
+// Separate from auth/feedback state; corruption or contention simply skips the notice.
+export async function notifyForUpdates(directory: string, installedVersion: string,
+  check = (version: string) => checkForUpdates(version, request, 1000),
+  emit = (text: string) => { process.stderr.write(text); }, now = Date.now()): Promise<void> {
+  const file = path.join(directory, 'update-notice.json');
+  const lockFile = file + '.lock';
+  const temp = file + '.' + randomUUID() + '.tmp';
+  let lock;
+  try {
+    await mkdir(directory, { recursive: true, mode: 0o700 });
+    lock = await open(lockFile, 'wx', 0o600);
+    try {
+      let saved: unknown;
+      try { saved = JSON.parse(await readFile(file, 'utf8')); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') return; }
+      if (saved !== undefined) {
+        if (!saved || typeof saved !== 'object' || Array.isArray(saved)) return;
+        const { schemaVersion, nextCheckAt } = saved as Record<string, unknown>;
+        if (schemaVersion !== 1 || typeof nextCheckAt !== 'number' || !Number.isSafeInteger(nextCheckAt)) return;
+        if (now < nextCheckAt) return;
+      }
+      const handle = await open(temp, 'wx', 0o600);
+      try { await handle.writeFile(JSON.stringify({ schemaVersion: 1, nextCheckAt: now + 86_400_000 }) + '\n'); await handle.sync(); }
+      finally { await handle.close(); }
+      await rename(temp, file);
+    } finally {
+      await lock.close(); lock = undefined;
+      await unlink(lockFile);
+      await unlink(temp).catch(() => {});
+    }
+    const result = await check(installedVersion);
+    if (result.updateAvailable === true && result.latestVersion && parseVersion(result.latestVersion)) {
+      emit(`[update] sts ${result.latestVersion} is available (installed ${installedVersion}). Run sts version --check for details; update using your installation method.\n`);
+    }
+  } catch {
+    // Optional notice failures must never change an already delivered STS result.
+  }
 }

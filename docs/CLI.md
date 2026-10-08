@@ -9,6 +9,20 @@ There is no directory override.
 The `auth env` command and `auth config --env` select Oracle deployment presets,
 not shell configuration.
 
+## Automatic response delivery
+
+All STS calls return verbatim data. Up to **16 KiB and 500 lines** goes directly to
+stdout; above either limit, the complete body is saved in a private per-user file
+and stdout returns a compact JSON reference with path, URI, size, hash and HTTP status.
+There are no output-mode flags or silent truncation. Auth/local/feedback/update
+commands keep their separate output behavior. `--quiet` does not hide file references.
+
+Scripts and agents must handle both forms. Redirecting stdout may save a receipt
+rather than the API body. Completed files remain until deleted; use local tools to
+read/filter selected portions. API errors keep their exit codes. Failed storage does
+not undo a POS write and must never prompt an automatic retry. See
+[Response delivery](RESPONSES.md) for the full contract and privacy/failure details.
+
 ## Local and authentication commands
 
 | Command | Purpose |
@@ -20,18 +34,26 @@ not shell configuration.
 | `sts endpoints` | JSON catalog of supported GET endpoints |
 | `sts auth env` | Available environment presets |
 | `sts auth config` | Show configuration, without changing it |
-| `sts auth config --env <env> --username <user> --client-id <id>` | Configure and clear stale tokens if identity/endpoints change |
+| `sts auth config --env <env> --username <user> --client-id <id>` | Prepare login configuration; saved companies/tokens remain unchanged |
 | `sts auth config --env custom --auth-url <url> --sts-url <url> ...` | Custom deployment |
-| `sts auth login` | PKCE login using `--password`; saves tokens |
-| `sts auth refresh` | Explicit refresh and persistent token rotation |
+| `sts auth login` | PKCE login using `--password`; saves/selects the company; duplicates report stored tokens |
+| `sts auth refresh` | Renew all unexpired profiles now, bypassing cooldown; persist each rotation |
 | `sts auth status` | Local token presence and expiry (default for `sts auth`) |
 | `sts auth show` | Effective configuration plus token summary |
 | `sts auth restore --file <path> [--force]` | Import existing state without contacting Oracle |
-| `sts auth logout` | Clear tokens locally, not server-side revocation |
+| `sts auth logout` | Clear active-company tokens locally, not server-side revocation |
+| `sts company list` | List locally saved companies and token summaries; no Oracle access check |
+| `sts company status` | Active-company configuration and token summary |
+| `sts company select <exact-key>` | Select saved company and discard unfinished login configuration |
+| `sts company delete <exact-key>` | Remove one local profile; deleting active clears selection, not remote revocation |
 
 The organization is always derived from the Base64 client ID (`<organization>.<UUID>`
 when decoded), including when loading saved/imported state. There is no organization
 override. The original client ID is passed unchanged to Oracle.
+
+Keys are `<companyCode>@<lowercaseAuthHostname>`, excluding scheme, port and path. No bare-code/fuzzy selection: agents list and disambiguate first. Successful login always selects the saved company; failed login does not replace profiles or selection. Same company/hostname/username with stored unexpired tokens skips login. Explicitly select and log out before replacing a same-user configuration/login.
+
+Before STS API calls, all profiles are checked for due renewal. Success sets `refreshAfter` to now +24 hours; failure sets +1 hour and retains still-valid tokens. Known-expired token sets are deleted without refresh, requiring a new login. This runs only on use, not in the background; help/local commands/dry-runs stay offline. Requests pin their company key across renewal; failures for other companies do not block a usable active token. Persistence errors stop before the STS request. No API call is retried. Details: [authentication and state](AUTHENTICATION.md).
 
 Login accepts `--username` to override the saved user. Login/refresh accept `--quiet` and `--timeout <seconds>`. State-changing commands lock and save state; do not run another client against the same token simultaneously.
 
@@ -49,8 +71,22 @@ The explicit lookup contacts only npm's public `latest` metadata endpoint over
 verified HTTPS with a 5-second timeout, no retries, redirects or authentication.
 It does not read/save token state or cache results. Network/registry/metadata errors
 produce `checkStatus: "unavailable"`, `updateAvailable: null` and exit 0, not a false
-up-to-date result. This advisory cannot interfere with STS calls: ordinary commands
-never invoke it. `sts --version` and plain `sts version` remain completely local.
+up-to-date result. `sts --version` and plain `sts version` remain completely local.
+
+After successful non-quiet STS API calls, an automatic check runs at most once per
+24 hours, with a 1-second network timeout. Only a newer version produces a stderr
+notice; stdout and the STS exit code stay unchanged. Network/storage failures are
+silent and wait until the next daily attempt. No automatic checks run on failed
+STS calls, `--quiet`, help, local commands, auth commands or dry-runs. Checks run
+after response delivery, not in a daemon, and never install updates.
+
+A separate `update-notice.json` in the per-user state directory stores only the next
+attempt timestamp and schema version. A short exclusive lock prevents concurrent
+checks; the daily reservation is saved before networking, even if the check fails.
+Corrupt cache or lock contention skips the optional check without overwriting state.
+A hard termination during reservation can leave `update-notice.json.lock`; inspect
+and remove that stale lock only when no CLI command is running. Explicit
+`sts version --check` always bypasses this automatic-check schedule.
 
 Agents: check once per session, notify if newer and get approval before updating.
 Do not repeatedly check, interrupt active writes, or use a global install command
@@ -310,4 +346,4 @@ not overwrite corrupt state or change the STS operation's result.
 
 ## Deliberate exclusions in this first TypeScript release
 
-No generic arbitrary-URL command; no notification registration/subscription commands; no automatic refresh/retry/pagination; no response shaping or charged-tip verification; no invocation-body logging; no automatic self-updater or native executable download feed. SQL database access is not part of this CLI.
+No generic arbitrary-URL command; no notification registration/subscription commands; no post-failure STS retry or automatic pagination; no response shaping or charged-tip verification; no invocation-body logging; no automatic self-updater or native executable download feed. SQL database access is not part of this CLI.

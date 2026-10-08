@@ -37,14 +37,14 @@ test('failed rename preserves complete rotated-token recovery and old state', as
   assert.equal(recovery.length, 1);
   assert.ok(!names.some(n => n.endsWith('.lock')));
   const file = path.join(store.directory, recovery[0]);
-  assert.deepEqual(JSON.parse(await fs.readFile(file, 'utf8')), rotated);
+  assert.deepEqual(JSON.parse(await fs.readFile(file, 'utf8')).pending, rotated);
   assert.match(error.hint, /do not retry login\/refresh/);
   assert.ok(error.hint.includes(file));
   assert.ok(!error.message.includes(rotated.tokens.refreshToken));
   assert.ok(!error.hint.includes(rotated.tokens.refreshToken));
   if (process.platform !== 'win32') assert.equal((await fs.stat(file)).mode & 0o777, 0o600);
   // Restoring a complete recovery copy uses the normal locked persistence path.
-  await store.mutate(async state => Object.assign(state, JSON.parse(await fs.readFile(file, 'utf8'))));
+  await store.mutateCompanies(async registry => Object.assign(registry, JSON.parse(await fs.readFile(file, 'utf8'))));
   assert.deepEqual(await store.load(), rotated);
   await fs.unlink(file);
   assert.deepEqual(await fs.readdir(store.directory), ['StsCli.json']);
@@ -69,7 +69,7 @@ for (const failure of ['writeFile', 'sync']) test(`failed ${failure} cleans inco
   catch (e) { error = e; }
   finally { t.mock.restoreAll(); syncBuiltinESMExports(); }
   assert.equal(error?.exitCode, 12);
-  assert.equal(error.hint, undefined);
+  assert.match(error.hint, /No complete replacement/);
   assert.deepEqual(await store.load(), old);
   assert.deepEqual(await fs.readdir(store.directory), ['StsCli.json']);
 });

@@ -193,7 +193,7 @@ test('reminder thresholds, cooldown, snooze and disabling only affect local stat
 test('CLI STS success counts locally without changing raw bytes or prompting in pipes; dry-run/errors do not count', async t => {
   const body = '{ "number":9007199254740993 }\r\n'; let status = 200;
   const s = await setup(t, (_, res) => { res.writeHead(status); res.end(body); });
-  await new StateStore(s.directory).save({ auth: { orgName: 'synthetic', clientId: clientIdFor('synthetic'), stsUrl: s.url }, tokens: { accessToken: 'synthetic-access' } });
+  await new StateStore(s.directory).save({ auth: { orgName: 'synthetic', clientId: clientIdFor('synthetic'), stsUrl: s.url, authUrl: s.url }, tokens: { accessToken: 'synthetic-access', obtainedAt: new Date().toISOString(), expiresIn: 3600 } });
   await s.store.configure({ reminders: 'on' }, new Date('2020-01-01T00:00:00Z'));
   const args = ['tender','list','--location','test-loc','--rvc','1'];
   const r = await s.run(args); assert.equal(r.code, 0); assert.equal(r.stdout, body); assert.doesNotMatch(r.stderr, /Would you like/);

@@ -23,14 +23,18 @@ node bin/sts.js --help
 
 ## Core contracts
 
-1. Auth: Oracle authorization-code + PKCE S256; explicit refresh; always persist
-   rotated refresh tokens. Preserve significant client-ID characters.
+1. Auth: Oracle authorization-code + PKCE S256; company-scoped scheduled renewal
+   before API calls; always persist rotated refresh tokens. Preserve significant client-ID characters.
 2. Requests: explicit noun/verb commands, flags and structured JSON. Never guess
    location, RVC, employee, item or tender. Unknown request fields survive unless
    documented as CLI-owned overrides.
-3. Responses: STS response bytes pass unchanged to stdout, including errors.
-   No parsing, wrapping, redaction, pretty-printing or added newline. HTTP
-   compression decoding is transport processing, not JSON interpretation.
+3. Responses: STS data remains verbatim, including errors. Up to 16,384 decoded
+   bytes AND 500 lines goes unchanged to stdout; above either limit, save the complete
+   body privately and emit a compact JSON file reference. All STS calls use
+   src/responses.ts. No mode flags, agent detection, body parsing, redaction,
+   pretty-printing, truncation or added body newline. HTTP compression decoding is
+   transport processing. Auth/feedback/update responses stay separate. Storage or
+   delivery failures never justify retrying a POS write; retain uncertainty guidance.
 
 Auth responses require internal parsing to persist tokens. Local commands use
 src/output.ts; check example prints editable JSON directly. Diagnostics and local
@@ -49,7 +53,12 @@ Exit codes: 0 success, 1 unexpected local failure, 6 usage, 7 not configured,
   Organization-wide discovery is not a location-scoped test.
 - New/add/delete are destructive live operations. Calculator is non-persisting.
   Do not run a live write without approval and a clear target/body.
-- Never automatically retry writes, refresh tokens or follow redirects.
+- Never retry STS requests or follow redirects. Before API calls, renew all due
+  company profiles: success +24h, failure +1h. Remove expired token sets without
+  refreshing; preserve configuration. No network for help/local/dry-run commands.
+- Pin the active company key per operation; never mix endpoint and token profiles.
+  Company select/delete require exact keys. Failed login preserves saved profiles;
+  successful login stores and selects its key. Confirm deletion intent.
 - Idempotency requires both a stable header.idempotencyId and
   Simphony-Features: detect-duplicate-request; --idempotency-id is the opt-in.
 - Charged tips set chargedTipTotal without changing tender.total. The caller
@@ -75,7 +84,8 @@ Exit codes: 0 success, 1 unexpected local failure, 6 usage, 7 not configured,
   macOS uses ~/Library/Application Support/StsCli; Linux uses ~/.config/StsCli.
   There is no directory override. Reuse valid tokens or explicitly refresh them.
   Different OS users or machines do not automatically share this state.
-  Do not rerun config/login unnecessarily: configuration changes clear tokens.
+  Do not rerun config/login unnecessarily: configuration prepares the next login
+  without changing saved profiles. Duplicate same-user logins report saved tokens.
 - If the user supplies credentials and authorizes login, use
   `sts auth login --password "<password>"` as requested. Do not refuse solely
   because a password was supplied. Argument values may be visible to the shell/OS.
@@ -90,6 +100,9 @@ Exit codes: 0 success, 1 unexpected local failure, 6 usage, 7 not configured,
   guaranteed deadline). An existing token or one issued too early may not reflect the
   grant. Verify only the authorized location; do not diagnose a password problem
   or repeatedly retry login solely from a propagation-related access denial.
+- Successful non-quiet STS calls check npm automatically at most once per 24h
+  (1-second network timeout), notifying on stderr only when newer. No installs,
+  retries, or changes to STS output/exit codes. Local/help/dry-run stay offline.
 - Check `sts version --check` once at session start, not on every request. Notify
   the user if newer and get approval before updating. Respect their installation
   method and active work. An unavailable check does not mean up to date and must

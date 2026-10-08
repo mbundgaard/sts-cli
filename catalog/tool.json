@@ -9,6 +9,6 @@
   "distribution": { "type": "npm", "package": "@muneris/sts-cli" },
   "source": "https://github.com/mbundgaard/sts-cli",
   "support": "support@muneris.dk",
-  "agentGuidance": "Run sts --help and sts endpoints to discover commands. STS API response bytes pass unchanged to stdout; local commands return JSON, diagnostics go to stderr. Check npm for the current published version; ask before installing updates.",
+  "agentGuidance": "Run sts --help and sts endpoints to discover commands. List companies and select exact <companyCode>@<authHostname> keys; do not guess from shorthand. Successful login selects its company. Before API calls, all due profiles renew; expired tokens are removed and require login. Help/local/dry-run commands stay offline. STS API bodies stay verbatim: inline up to 16 KiB and 500 lines; above either limit, private files with compact JSON references. Filter/read selected file data instead of loading it all into context. Local commands return JSON, diagnostics go to stderr. Successful non-quiet STS calls check npm daily and notify on stderr if newer; version --check forces a lookup. Ask before installing updates; nothing installs automatically.",
   "screenshots": []
 }

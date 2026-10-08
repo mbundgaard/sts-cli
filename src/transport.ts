@@ -1,11 +1,13 @@
 import http, { type IncomingHttpHeaders } from 'node:http';
 import https from 'node:https';
-import { gunzipSync, inflateSync, brotliDecompressSync } from 'node:zlib';
+import { createGunzip, createInflate, createBrotliDecompress } from 'node:zlib';
+import { Transform, Writable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import { CliError, Exit } from './output.js';
 
 export interface HttpRequest {
   url: string; method: string; headers?: Record<string, string>;
-  body?: string; insecure?: boolean; timeoutMs?: number;
+  body?: string; insecure?: boolean; timeoutMs?: number; signal?: AbortSignal;
 }
 export interface HttpResponse { status: number; headers: IncomingHttpHeaders; body: Buffer }
 export function validateUrl(input: string): URL {
@@ -17,39 +19,54 @@ export function validateUrl(input: string): URL {
   return url;
 }
 
-// No redirects, no retries, no JSON parsing. Buffered bytes avoid printing partial
-// responses as if complete when a socket fails. Body decoding only undoes HTTP compression.
-export async function request(input: HttpRequest): Promise<HttpResponse> {
+// Shared HTTP plumbing. Decoding is transport processing, never JSON interpretation.
+// The caller's sink controls storage; data calls never accumulate the entire body here.
+export async function requestInto(input: HttpRequest, sink: Writable): Promise<Omit<HttpResponse, 'body'>> {
   const url = validateUrl(input.url);
-  return new Promise((resolve, reject) => {
-    const headers = { 'User-Agent': 'StsCli-TypeScript/0.4', 'Accept-Encoding': 'identity', ...input.headers };
-    const client = url.protocol === 'https:' ? https : http;
-    const req = client.request(url, { method: input.method, headers, rejectUnauthorized: !input.insecure }, res => {
-      const chunks: Buffer[] = [];
-      res.on('data', chunk => chunks.push(Buffer.from(chunk)));
-      res.on('error', reject);
-      res.on('aborted', () => reject(new Error('Response interrupted; request outcome may be uncertain')));
-      res.on('end', () => {
-        try {
-          let body = Buffer.concat(chunks);
-          const encoding = res.headers['content-encoding']?.toLowerCase();
-          // HEAD/204/304 have no message body. Their encoding headers describe
-          // a representation, not bytes available for decompression here.
-          const noBody = input.method.toUpperCase() === 'HEAD' || res.statusCode === 204 || res.statusCode === 304;
-          if (noBody) body = Buffer.alloc(0);
-          else if (encoding === 'gzip') body = gunzipSync(body);
-          else if (encoding === 'deflate') body = inflateSync(body);
-          else if (encoding === 'br') body = brotliDecompressSync(body);
-          else if (encoding && encoding !== 'identity') throw new Error(`Unsupported content encoding: ${encoding}`);
-          resolve({ status: res.statusCode ?? 0, headers: res.headers, body });
-        } catch (error) { reject(error); }
-      });
-    });
-    const timer = setTimeout(() => req.destroy(new Error('HTTP request timed out; write outcome may be uncertain')), input.timeoutMs ?? 30_000);
-    req.on('close', () => clearTimeout(timer));
-    req.on('error', reject);
-    req.end(input.body);
+  const timeout = input.timeoutMs ?? 30_000;
+  if (!Number.isFinite(timeout) || timeout <= 0) throw new CliError(Exit.usage, 'Timeout must be positive');
+  const headers = { 'User-Agent': 'StsCli-TypeScript/0.4', 'Accept-Encoding': 'identity', ...input.headers };
+  const client = url.protocol === 'https:' ? https : http;
+  const req = client.request(url, { method: input.method, headers, rejectUnauthorized: !input.insecure, signal: input.signal });
+  // A timeout can destroy the sink before headers arrive and pipeline attaches listeners.
+  const ignoreEarlyError = () => {};
+  sink.on('error', ignoreEarlyError);
+  const response = new Promise<http.IncomingMessage>((resolve, reject) => {
+    req.once('response', resolve); req.once('error', reject);
   });
+  const timer = setTimeout(() => {
+    const error = new Error('HTTP request timed out; request outcome may be uncertain');
+    req.destroy(error); sink.destroy(error);
+  }, timeout);
+  try {
+    req.end(input.body);
+    const res = await response;
+    const encoding = res.headers['content-encoding']?.trim().toLowerCase();
+    const noBody = input.method.toUpperCase() === 'HEAD' || res.statusCode === 204 || res.statusCode === 304;
+    let decoder: Transform | undefined;
+    if (noBody) decoder = new Transform({ transform(_chunk, _encoding, done) { done(); } });
+    else if (encoding === 'gzip') decoder = createGunzip();
+    else if (encoding === 'deflate') decoder = createInflate();
+    else if (encoding === 'br') decoder = createBrotliDecompress();
+    else if (encoding && encoding !== 'identity') throw new Error('Unsupported content encoding');
+    if (decoder) await pipeline(res, decoder, sink, { signal: input.signal });
+    else await pipeline(res, sink, { signal: input.signal });
+    return { status: res.statusCode ?? 0, headers: res.headers };
+  } catch (error) {
+    req.destroy(); sink.destroy(); throw error;
+  } finally {
+    clearTimeout(timer);
+    // Keep the harmless sink error listener through asynchronous destruction.
+  }
+}
+
+// Auth requires internal parsing of the complete token response. It never uses data
+// delivery receipts or export files. Existing auth callers keep this buffered API.
+export async function request(input: HttpRequest): Promise<HttpResponse> {
+  const chunks: Buffer[] = [];
+  const sink = new Writable({ write(chunk, _encoding, done) { chunks.push(Buffer.from(chunk)); done(); } });
+  const response = await requestInto(input, sink);
+  return { ...response, body: Buffer.concat(chunks) };
 }
 export function httpExit(status: number): number {
   if (status >= 200 && status < 300) return Exit.ok;

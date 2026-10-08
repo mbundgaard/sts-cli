@@ -39,11 +39,17 @@ export class AuthClient {
   tokens(response: HttpResponse, verifier: string, priorRefresh?: string): TokenSet {
     const value = this.parse(response);
     if (typeof value.access_token !== 'string' || !value.access_token) throw new CliError(Exit.auth, 'IDM response did not contain an access token');
+    const lifetime = typeof value.expires_in === 'number' ? value.expires_in
+      : typeof value.expires_in === 'string' && /^\d+$/.test(value.expires_in) ? Number(value.expires_in) : NaN;
+    const knownLifetime = Number.isSafeInteger(lifetime) && lifetime >= 0 && Number.isFinite(new Date(Date.now() + lifetime * 1000).getTime());
+    // Never lose a rotated refresh token because optional expiry metadata is unusable.
+    // Unknown expiry is retained and reported, never guessed for scheduled renewal.
+    if (!knownLifetime && !this.quiet) process.stderr.write('[auth] Token expiry is unknown; credentials will be saved without guessing a lifetime.\n');
     return {
       accessToken: value.access_token,
       refreshToken: typeof value.refresh_token === 'string' && value.refresh_token ? value.refresh_token : priorRefresh,
       codeVerifier: verifier, obtainedAt: new Date().toISOString(),
-      expiresIn: typeof value.expires_in === 'number' ? value.expires_in : undefined,
+      expiresIn: knownLifetime ? lifetime : undefined,
     };
   }
   async login(auth: AuthConfig, password: string): Promise<TokenSet> {

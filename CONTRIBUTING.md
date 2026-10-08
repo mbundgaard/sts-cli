@@ -29,9 +29,13 @@ Use TypeScript for implementation and Node's built-in test runner for tests. Fol
 ## Contracts to preserve
 
 - Explicit commands and identifiers; never guess a target, employee, item, or tender.
-- STS response bodies are unchanged on stdout, even for non-JSON/error responses.
+- STS response bodies stay verbatim, even for non-JSON/errors: inline up to 16 KiB
+  and 500 lines; above either limit, save unchanged and return a file reference.
+  Use the shared response handler, without mode flags or silent truncation.
 - Diagnostics/errors go to stderr. Local command results use the local JSON contract.
-- No automatic writes, retries, redirects, or token refreshes.
+- No automatic POS writes, STS retries or redirects. Pre-API maintenance renews
+  all due company profiles (+24h success, +1h failure); expired token sets are
+  removed without renewal. Keep help/local/dry-run commands network-free.
 - Duplicate detection requires both a stable ID and the feature header.
 - Refresh must persist rotated tokens. Passwords must never be saved.
 - State lives outside package installation directories and is never bundled.
