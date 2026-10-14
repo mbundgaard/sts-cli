@@ -21,7 +21,7 @@ async function setup(t, handler) {
   const base = `http://127.0.0.1:${server.address().port}`;
   const store = new StateStore(directory);
   await store.save({ auth: { orgName: 'test-org-padded', authUrl: base, stsUrl: base, clientId: testClientId, username: 'test-user' },
-    tokens: { accessToken: 'test-access', refreshToken: 'test-refresh', codeVerifier: 'test-verifier', obtainedAt: new Date().toISOString(), expiresIn: 3600 } });
+    tokens: { accessToken: 'test-access', refreshToken: 'test-refresh', codeVerifier: 'a'.repeat(43), obtainedAt: new Date().toISOString(), expiresIn: 3600 } });
   return { directory, store, base, run: (args, stdin = '') => run(directory, args, stdin) };
 }
 function run(directory, args, stdin = '') {
@@ -143,7 +143,7 @@ test('refresh persists rotation and never outputs tokens', async t => {
     const form = new URLSearchParams(Buffer.concat(chunks).toString());
     assert.equal(form.get('grant_type'), 'refresh_token');
     assert.equal(form.get('client_id'), testClientId);
-    assert.equal(form.get('code_verifier'), 'test-verifier');
+    assert.equal(form.get('code_verifier'), 'a'.repeat(43));
     assert.equal(form.has('password'), false);
     res.end(JSON.stringify({ access_token: 'rotated-access', refresh_token: 'rotated-refresh', expires_in: 3600 }));
   });
@@ -171,8 +171,9 @@ for (const suppliedCookies of [false, true]) test(`login uses cookies, PKCE and 
     if (url.pathname.endsWith('/signin')) {
       assert.match(req.headers.cookie, /session=test-session/);
       const cookies = req.headers.cookie.split('; ').filter(cookie => cookie.startsWith('client_id='));
-      assert.deepEqual(cookies, ['client_id=' + (suppliedCookies ? testClientId : encodeURIComponent(testClientId))]);
+      assert.deepEqual(cookies, suppliedCookies ? ['client_id=' + testClientId] : []);
       if (suppliedCookies) assert.ok(req.headers.cookie.includes('redirect_uri=apiaccount://callback'));
+      else assert.doesNotMatch(req.headers.cookie, /redirect_uri=|code_challenge=|response_type=|scope=/);
       assert.equal(form.get('orgname'), 'test-org-padded');
       assert.equal(form.get('password'), 'mock-password');
       res.end(JSON.stringify({ nextOp: 'redirect', redirectUrl: 'apiaccount://callback?code=mock-code' })); return;

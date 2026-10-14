@@ -2,6 +2,25 @@
 
 Notable changes are documented here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+- None.
+
+## 0.6.0 - 2026-10-14
+
+- Align authentication safety with BI/CC using local implementations only: verified
+  HTTPS IDM transport outside loopback, strict callbacks/stage-specific statuses,
+  sanitized diagnostics and positive fractional auth timeouts up to 300 seconds.
+- **Compatibility:** use only Oracle-supplied cookies and require a refresh token
+  for new logins. Remove synthesized-cookie and non-refreshable-login fallbacks.
+  These changes are offline-tested only; deployment compatibility needs live review.
+- Validate STS state fields, product isolation and saved PKCE/credential metadata.
+  Preserve valid untagged/partial legacy STS state; stamp registries product sts on
+  mutation. Never import foreign credentials or save unknown password fields.
+- Add equivalent synthetic auth-contract tests, plus legacy migration coverage.
+  Access-token selection, company renewal/locking/recovery and STS data transport
+  remain independent of BI/CC; no new dependencies or live calls.
+
 ## 0.5.0 - 2026-10-08
 
 - Automatically check npm after successful non-quiet STS API calls, at most once

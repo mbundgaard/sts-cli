@@ -79,6 +79,14 @@ Exit codes: 0 success, 1 unexpected local failure, 6 usage, 7 not configured,
   format. Never ask for a separate company code or override it. Send the original
   client ID unchanged, including padding; reject malformed IDs instead of guessing.
 
+- Use the common STS/BI/CC auth safety contract, implemented independently in each repo.
+  IDM requires HTTPS outside loopback tests. Preserve only Oracle-supplied cookies;
+  new logins require access_token and refresh_token. Validate callback/stage status;
+  sanitize credential-bearing diagnostics. No cookie synthesis, redirects or auth retries.
+  Auth timeout is positive/fractional, at most 300 seconds. Keep STS data transport separate.
+- Reject foreign product/unknown state fields. Valid untagged legacy STS files migrate
+  to product sts on mutation; retain known partial legacy token fields without inventing
+  credentials. Do not relabel BI/CC state. See docs/AUTHENTICATION.md for compatibility.
 - Start each session with `sts auth status`; saved state is per OS user, not per
   agent session. Windows uses AppData/Roaming/StsCli beneath the user's home;
   macOS uses ~/Library/Application Support/StsCli; Linux uses ~/.config/StsCli.

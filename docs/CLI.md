@@ -55,7 +55,13 @@ Keys are `<companyCode>@<lowercaseAuthHostname>`, excluding scheme, port and pat
 
 Before STS API calls, all profiles are checked for due renewal. Success sets `refreshAfter` to now +24 hours; failure sets +1 hour and retains still-valid tokens. Known-expired token sets are deleted without refresh, requiring a new login. This runs only on use, not in the background; help/local commands/dry-runs stay offline. Requests pin their company key across renewal; failures for other companies do not block a usable active token. Persistence errors stop before the STS request. No API call is retried. Details: [authentication and state](AUTHENTICATION.md).
 
-Login accepts `--username` to override the saved user. Login/refresh accept `--quiet` and `--timeout <seconds>`. State-changing commands lock and save state; do not run another client against the same token simultaneously.
+Login accepts `--username` to override the saved user. Login/refresh accept `--quiet`
+and `--timeout <seconds>` (positive, fractional allowed, at most 300; default 30).
+IDM requires HTTPS outside loopback tests. New logins require access and refresh tokens;
+only Oracle-supplied cookies are used. State imports reject foreign product markers,
+unknown fields and malformed credentials; valid legacy STS files migrate to a registry
+marked `product: "sts"`. State-changing commands lock and save state; do not run another
+client against the same token simultaneously. See the [compatibility notes](AUTHENTICATION.md#common-authentication-contract).
 
 ## Update checks and support
 

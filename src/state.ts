@@ -15,10 +15,11 @@ export interface TokenSet {
   obtainedAt?: string; expiresIn?: number;
 }
 // Request/auth clients still consume one coherent company snapshot, never the registry.
-export interface State { auth: AuthConfig; tokens?: TokenSet; debugLog?: boolean }
+export interface State { product?: 'sts'; auth: AuthConfig; tokens?: TokenSet; debugLog?: boolean }
 export interface Company extends State { refreshAfter?: string }
 export interface CompanyState {
   schemaVersion: 2;
+  product?: 'sts'; // Untagged legacy STS registries migrate on their next save.
   activeCompany: string | null;
   companies: Record<string, Company>;
   // Normal auth config staging. Incomplete legacy state is retained here as well.
@@ -31,6 +32,14 @@ export function stateDirectory(home = os.homedir()): string {
   if (process.platform === 'darwin') return path.join(home, 'Library', 'Application Support', 'StsCli');
   return path.join(home, '.config', 'StsCli');
 }
+// Authentication has stricter transport rules than intentionally supported local STS data URLs.
+export function baseUrl(value: string): string {
+  const url = validateUrl(value);
+  const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
+  if (url.protocol !== 'https:' && !(url.protocol === 'http:' && loopback)) throw new CliError(Exit.usage, 'Authentication requires HTTPS outside loopback tests');
+  if (url.search || value.includes('?') || value.includes('#')) throw new CliError(Exit.usage, 'Base URL cannot contain a query or fragment');
+  return url.href.replace(/\/$/, '');
+}
 function object(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
@@ -42,14 +51,35 @@ function timestamp(value: string): boolean {
 }
 export function validateState(value: unknown): State {
   if (!object(value) || !object(value.auth)) throw new Error('state must contain an auth object');
-  for (const key of ['environment','authUrl','stsUrl','clientId','orgName','username']) {
-    if (value.auth[key] !== undefined && value.auth[key] !== null && typeof value.auth[key] !== 'string') throw new Error(`auth.${key} must be a string`);
+  if (value.product !== undefined && value.product !== 'sts') throw new Error('Foreign product state cannot be imported into STS');
+  if (Object.keys(value).some(key => !['product', 'auth', 'tokens', 'debugLog'].includes(key))) throw new Error('Unknown STS state field');
+  const authKeys = ['environment','authUrl','stsUrl','clientId','orgName','username'];
+  if (Object.keys(value.auth).some(key => !authKeys.includes(key))) throw new Error('Unknown auth field; passwords must never be saved');
+  for (const key of authKeys) {
+    if (value.auth[key] === null) delete value.auth[key]; // Historical optional .NET fields.
+    const item = value.auth[key];
+    if (item !== undefined && (typeof item !== 'string' || !item.trim() || /[\u0000-\u001f\u007f]/.test(item))) throw new Error(`Invalid auth.${key}`);
   }
-  if (value.tokens !== undefined && value.tokens !== null) {
+  if (typeof value.auth.authUrl === 'string') baseUrl(value.auth.authUrl);
+  if (typeof value.auth.stsUrl === 'string') {
+    const url = validateUrl(value.auth.stsUrl);
+    if (url.search || value.auth.stsUrl.includes('?') || value.auth.stsUrl.includes('#')) throw new Error('Invalid STS base URL');
+  }
+  if (value.debugLog === null) delete value.debugLog;
+  if (value.debugLog !== undefined && typeof value.debugLog !== 'boolean') throw new Error('debugLog must be a boolean');
+  if (value.tokens === null) delete value.tokens;
+  if (value.tokens !== undefined) {
     if (!object(value.tokens)) throw new Error('tokens must be an object');
+    const tokenKeys = ['accessToken', 'refreshToken', 'codeVerifier', 'obtainedAt', 'expiresIn'];
+    if (Object.keys(value.tokens).some(key => !tokenKeys.includes(key))) throw new Error('Unknown token field; STS requires access_token, not BI/CC id_token');
+    for (const key of tokenKeys) if (value.tokens[key] === null) delete value.tokens[key];
+    // Legacy STS snapshots may be incomplete/non-refreshable. Preserve their known
+    // fields without inventing credentials; newly issued token sets are complete.
     for (const key of ['accessToken','refreshToken','codeVerifier','obtainedAt']) {
-      if (value.tokens[key] != null && typeof value.tokens[key] !== 'string') throw new Error(`tokens.${key} must be a string`);
+      const item = value.tokens[key];
+      if (item !== undefined && (typeof item !== 'string' || !item.trim() || /[\u0000-\u001f\u007f]/.test(item))) throw new Error(`Invalid tokens.${key}`);
     }
+    if (value.tokens.codeVerifier !== undefined && !/^[A-Za-z0-9._~-]{43,128}$/.test(value.tokens.codeVerifier as string)) throw new Error('Invalid saved PKCE verifier');
     if (value.tokens.expiresIn != null && (typeof value.tokens.expiresIn !== 'number' || !Number.isSafeInteger(value.tokens.expiresIn) || value.tokens.expiresIn < 0)) throw new Error('tokens.expiresIn must be nonnegative whole seconds');
     if (typeof value.tokens.obtainedAt === 'string' && !timestamp(value.tokens.obtainedAt)) throw new Error('tokens.obtainedAt must be an ISO timestamp');
     if (value.tokens.obtainedAt && value.tokens.expiresIn != null && !Number.isFinite(new Date(Date.parse(value.tokens.obtainedAt as string) + (value.tokens.expiresIn as number) * 1000).getTime())) throw new Error('Invalid token expiry');
@@ -60,9 +90,9 @@ export function validateState(value: unknown): State {
 }
 export function companyKey(auth: AuthConfig): string {
   if (!auth.clientId || !auth.authUrl) throw new CliError(Exit.notConfigured, 'Client ID and auth URL are required to identify a company');
-  return `${organizationFromClientId(auth.clientId)}@${validateUrl(auth.authUrl).hostname.toLowerCase()}`;
+  return `${organizationFromClientId(auth.clientId)}@${new URL(baseUrl(auth.authUrl)).hostname.toLowerCase()}`;
 }
-export function emptyCompanies(): CompanyState { return { schemaVersion: 2, activeCompany: null, companies: {} }; }
+export function emptyCompanies(): CompanyState { return { schemaVersion: 2, product: 'sts', activeCompany: null, companies: {} }; }
 function scheduleLegacy(profile: Company): void {
   if (profile.tokens && profile.refreshAfter === undefined) {
     profile.refreshAfter = new Date(profile.tokens.obtainedAt ? Date.parse(profile.tokens.obtainedAt) + DAY : 0).toISOString();
@@ -70,6 +100,7 @@ function scheduleLegacy(profile: Company): void {
 }
 export function validateCompanies(value: unknown): CompanyState {
   if (!object(value)) throw new Error('Invalid company state');
+  if (value.product !== undefined && value.product !== 'sts') throw new Error('Foreign product state cannot be imported into STS');
   if (value.schemaVersion === undefined) {
     const legacy = validateState(value);
     const result = emptyCompanies();
@@ -80,14 +111,19 @@ export function validateCompanies(value: unknown): CompanyState {
     return result;
   }
   if (value.schemaVersion !== 2 || !object(value.companies) || (value.activeCompany !== null && typeof value.activeCompany !== 'string')) throw new Error('Invalid company registry schema');
+  if (Object.keys(value).some(key => !['schemaVersion', 'product', 'activeCompany', 'companies', 'pending'].includes(key))) throw new Error('Unknown STS registry field');
   for (const [key, item] of Object.entries(value.companies)) {
-    const profile = validateState(item) as Company;
+    if (!object(item)) throw new Error('Invalid STS company profile');
+    const { refreshAfter, ...snapshot } = item;
+    const profile: Company = validateState(snapshot);
     if (companyKey(profile.auth) !== key) throw new Error('Company key does not match its client ID/auth hostname');
-    if (profile.refreshAfter !== undefined && (typeof profile.refreshAfter !== 'string' || !timestamp(profile.refreshAfter))) throw new Error('Invalid refreshAfter timestamp');
-    scheduleLegacy(profile);
+    if (refreshAfter !== undefined && (typeof refreshAfter !== 'string' || !timestamp(refreshAfter))) throw new Error('Invalid refreshAfter timestamp');
+    if (refreshAfter !== undefined) profile.refreshAfter = refreshAfter as string;
+    scheduleLegacy(profile); value.companies[key] = profile;
   }
   if (value.activeCompany !== null && !Object.hasOwn(value.companies, value.activeCompany as string)) throw new Error('Active company is not present in the registry');
   if (value.pending !== undefined) validateState(value.pending);
+  value.product = 'sts';
   return value as unknown as CompanyState;
 }
 export function activeState(registry: CompanyState): Company {

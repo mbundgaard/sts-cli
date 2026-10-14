@@ -26,7 +26,7 @@ function renewal(res, name, expires = 864000) { res.end(JSON.stringify({ access_
 test('keys use derived company code and lowercase hostname only; invalid registries fail closed', () => {
   const auth = { clientId: clientIdFor('AUS'), authUrl: 'https://IDM.EXAMPLE.invalid:9443/custom/path' };
   assert.equal(companyKey(auth), 'AUS@idm.example.invalid');
-  assert.equal(companyKey({ ...auth, authUrl: 'http://idm.example.invalid/other' }), companyKey(auth));
+  assert.equal(companyKey({ ...auth, authUrl: 'https://idm.example.invalid/other' }), companyKey(auth));
   for (const value of [
     { schemaVersion: 9, companies: {}, activeCompany: null },
     { schemaVersion: 2, companies: {}, activeCompany: 'missing' },

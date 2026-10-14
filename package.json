@@ -1,18 +1,49 @@
 {
   "name": "@muneris/sts-cli",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Agent-first Oracle Simphony STS Gen2 CLI with raw API responses",
   "type": "module",
   "license": "MIT",
   "author": "Muneris",
   "homepage": "https://github.com/mbundgaard/sts-cli#readme",
-  "repository": { "type": "git", "url": "git+https://github.com/mbundgaard/sts-cli.git" },
-  "bugs": { "url": "https://github.com/mbundgaard/sts-cli/issues" },
-  "keywords": ["oracle", "simphony", "sts", "cli", "pos", "typescript"],
-  "bin": { "sts": "bin/sts.js" },
-  "files": ["bin/", "dist/", "README.md", "LICENSE", "CHANGELOG.md", "CONTRIBUTING.md", "SECURITY.md", "CODE_OF_CONDUCT.md", "docs/CLI.md", "docs/AUTHENTICATION.md", "docs/DEVELOPMENT.md", "docs/RESPONSES.md"],
-  "engines": { "node": ">=22" },
-  "publishConfig": { "access": "public" },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mbundgaard/sts-cli.git"
+  },
+  "bugs": {
+    "url": "https://github.com/mbundgaard/sts-cli/issues"
+  },
+  "keywords": [
+    "oracle",
+    "simphony",
+    "sts",
+    "cli",
+    "pos",
+    "typescript"
+  ],
+  "bin": {
+    "sts": "bin/sts.js"
+  },
+  "files": [
+    "bin/",
+    "dist/",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md",
+    "CONTRIBUTING.md",
+    "SECURITY.md",
+    "CODE_OF_CONDUCT.md",
+    "docs/CLI.md",
+    "docs/AUTHENTICATION.md",
+    "docs/DEVELOPMENT.md",
+    "docs/RESPONSES.md"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "tsc",
     "test": "npm run build && node --test tests/*.test.mjs",

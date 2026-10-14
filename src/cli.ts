@@ -1,13 +1,12 @@
 import { Command, CommanderError } from 'commander';
 import { readFile } from 'node:fs/promises';
 import { readFileSync } from 'node:fs';
-import { StateStore, stateDirectory, tokenSummary, validateCompanies, activeState, type State } from './state.js';
+import { StateStore, stateDirectory, tokenSummary, validateCompanies, activeState, baseUrl, type State } from './state.js';
 import { registerCompanies, loginCompany, refreshCompanies } from './companies.js';
 import { environments } from './environments.js';
 import { endpoints } from './endpoints.js';
 import { examples, example } from './examples.js';
 import { buildRead, buildCheckRead, buildCheckWrite, baseRequest, simHeaders, integer, decimal, readBody, validateStsUrl, type Options, type BuiltRequest } from './requests.js';
-import { validateUrl } from './transport.js';
 import { deliverResponse } from './responses.js';
 import { CliError, Exit, localResult, reportError } from './output.js';
 import { parseJson } from './json.js';
@@ -28,6 +27,14 @@ function network(cmd: Command): Command {
   return cmd.option('-q, --quiet', 'Suppress HTTP diagnostics and automatic update checks (errors still go to stderr)')
     .option('--timeout <seconds>', 'HTTP timeout in seconds; no automatic retries', value => {
       const n = integer(value); if (n < 1) throw new CliError(Exit.usage, 'Timeout must be positive'); return n;
+    }, 30);
+}
+function authNetwork(cmd: Command): Command {
+  return cmd.option('-q, --quiet', 'Suppress HTTP diagnostics (errors still go to stderr)')
+    .option('--timeout <seconds>', 'HTTP timeout, greater than 0 and at most 300 seconds; no retries', value => {
+      const n = Number(value);
+      if (!Number.isFinite(n) || n <= 0 || n > 300) throw new CliError(Exit.usage, 'Timeout must be greater than 0 and at most 300 seconds');
+      return n;
     }, 30);
 }
 function api(cmd: Command): Command {
@@ -111,7 +118,7 @@ export function createProgram(store = new StateStore(), setExit: (code: number) 
   auth.command('env').description('[read-only][local] List Oracle environment presets; custom permits explicit URLs').action(() => localResult('auth env', { environments, custom: true }));
   auth.command('config').description('[writes-state][local] Prepare login configuration without changing saved companies or active tokens')
     .option('--env <environment>', 'mte2, mte3, mte4, mte5, mtu1 or custom')
-    .option('--auth-url <url>', 'Explicit IDM base URL').option('--sts-url <url>', 'Save the default STS base URL (http(s)://host[:port][/base-path])')
+    .option('--auth-url <url>', 'Explicit HTTPS IDM base URL (HTTP only for loopback tests)').option('--sts-url <url>', 'Save the default STS base URL (http(s)://host[:port][/base-path])')
     .option('--username <user>', 'Oracle API username')
     .option('--client-id <id>', 'Base64 <organization>.<UUID>; organization is derived automatically, original ID preserved')
     .addHelpText('after', '\nExample: sts auth config --env mte5 --username <user> --client-id <client-id>\nConfiguration prepares the next login; saved companies and active tokens are unchanged.\nSuccessful login saves the configuration and selects its company.\nTo replace a same-user saved login, select its exact company and explicitly log out first.\n')
@@ -129,7 +136,7 @@ export function createProgram(store = new StateStore(), setExit: (code: number) 
         for (const [option, field] of [['authUrl','authUrl'],['stsUrl','stsUrl'],['username','username'],['clientId','clientId']] as const) {
           if (opts[option] !== undefined) {
             if (!opts[option].trim()) throw new CliError(Exit.usage, `${option} cannot be blank`);
-            if (option === 'authUrl') validateUrl(opts[option]);
+            if (option === 'authUrl') baseUrl(opts[option]);
             if (option === 'stsUrl') validateStsUrl(opts[option]);
             if (option === 'clientId') state.auth.orgName = organizationFromClientId(opts[option]);
             state.auth[field] = opts[option];
@@ -141,14 +148,14 @@ export function createProgram(store = new StateStore(), setExit: (code: number) 
       });
       localResult('auth config', { updated: true, configPath: store.file });
     });
-  network(auth.command('login').description('[writes-state][network] Oracle authorization-code + PKCE login; password is never stored'))
+  authNetwork(auth.command('login').description('[writes-state][network] Oracle authorization-code + PKCE login; password is never stored'))
     .option('--username <user>', 'Override saved username for this login').option('--password <password>', 'Password for this login only; never saved')
-    .addHelpText('after', '\nExample: sts auth login --password "<password>"\nAgents: first run sts auth status and reuse saved tokens or explicitly refresh them.\nWhen the user supplies credentials and authorizes login, use --password as requested;\ndo not refuse solely because a password was supplied.\nThe password is used for login only and is not saved by the CLI. Later sessions reuse saved tokens.\nSuccessful login saves/selects <companyCode>@<authHostname>. Failed login preserves saved profiles.\nA matching company/hostname/username with unexpired stored tokens skips login.\nSelect that exact company to use it; explicitly log out before replacing its login/configuration.\nRefresh uses the saved refresh token, not the password. You can rotate the password afterward in Oracle.\nDo not assume it is expired, one-time, or requires changing unless Oracle explicitly reports that.\nHTTP 401 alone does not establish a password-change requirement. Never echo it or include it in feedback.\nArgument values can be visible in shell history/process listings.\n')
+    .addHelpText('after', '\nExample: sts auth login --password "<password>"\nAgents: first run sts auth status and reuse saved tokens or explicitly refresh them.\nWhen the user supplies credentials and authorizes login, use --password as requested;\ndo not refuse solely because a password was supplied.\nThe password is used for login only and is not saved by the CLI. Later sessions reuse saved tokens.\nSuccessful login saves/selects <companyCode>@<authHostname>. Failed login preserves saved profiles.\nA matching company/hostname/username with unexpired stored tokens skips login.\nSelect that exact company to use it; explicitly log out before replacing its login/configuration.\nInitial login requires an access token and refresh token. Only Oracle-supplied cookies are used.\nIDM requires HTTPS outside loopback tests; no redirects, retries or TLS bypass.\nRefresh uses the saved refresh token, not the password. You can rotate the password afterward in Oracle.\nDo not assume it is expired, one-time, or requires changing unless Oracle explicitly reports that.\nHTTP 401 alone does not establish a password-change requirement. Never echo it or include it in feedback.\nArgument values can be visible in shell history/process listings.\n')
     .action(async opts => {
       const password = opts.password;
       localResult('auth login', await loginCompany(store, password, opts.username, opts.timeout, opts.quiet));
     });
-  network(auth.command('refresh').description('[writes-state][network] Explicitly renew all unexpired saved profiles now; expired tokens are removed'))
+  authNetwork(auth.command('refresh').description('[writes-state][network] Explicitly renew all unexpired saved profiles now; expired tokens are removed'))
     .addHelpText('after', '\nExplicit refresh bypasses refreshAfter, but never renews expired tokens or retries a failed attempt.\nAutomatic pre-API checks honor refreshAfter: success +24 hours, failure +1 hour.\nEach renewal is persisted separately. Active selection is unchanged.\n')
     .action(async opts => {
       const companies = await refreshCompanies(store, false, opts.timeout, opts.quiet);

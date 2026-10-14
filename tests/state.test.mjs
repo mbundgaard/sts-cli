@@ -4,7 +4,7 @@ import fs from 'node:fs/promises';
 import { syncBuiltinESMExports } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
-import { StateStore } from '../dist/state.js';
+import { StateStore, validateCompanies, validateState, companyKey } from '../dist/state.js';
 import { clientIdFor } from './fixtures.mjs';
 
 test('default state uses the OS user application-data directory', () => {
@@ -19,6 +19,35 @@ async function storeFor(t) {
   t.after(() => fs.rm(dir, { recursive: true, force: true }));
   return new StateStore(dir);
 }
+for (const registryForm of [false, true]) test(`legacy STS state remains readable and gets its own marker on mutation (registry: ${registryForm})`, async t => {
+  const store = await storeFor(t);
+  const legacy = { auth: { clientId: clientIdFor('Legacy'), authUrl: 'https://idm.example.invalid', stsUrl: 'http://pos.example.invalid:5443', username: 'Legacy_User' }, tokens: { accessToken: 'legacy-access', obtainedAt: '2026-01-01T00:00:00Z', expiresIn: 3600 } };
+  const key = companyKey(legacy.auth);
+  const value = registryForm ? { schemaVersion: 2, activeCompany: key, companies: { [key]: legacy } } : legacy;
+  const original = '\uFEFF' + JSON.stringify(value);
+  await fs.writeFile(store.file, original);
+  const registry = await store.loadCompanies();
+  assert.equal(registry.product, 'sts'); assert.equal(registry.activeCompany, key);
+  assert.deepEqual(registry.companies[key].tokens, legacy.tokens); // No invented refresh token/verifier.
+  assert.equal(registry.companies[key].auth.stsUrl, legacy.auth.stsUrl); // Local STS HTTP is independent of IDM policy.
+  assert.equal(await fs.readFile(store.file, 'utf8'), original); // Read-only migration never rewrites disk.
+  await store.mutateCompanies(async () => {});
+  const saved = JSON.parse(await fs.readFile(store.file, 'utf8'));
+  assert.equal(saved.product, 'sts'); assert.equal(saved.schemaVersion, 2);
+  assert.deepEqual(saved.companies[key].tokens, legacy.tokens);
+});
+test('legacy optional null fields normalize without inventing credentials', () => {
+  const state = validateState({ auth: { clientId: clientIdFor('Legacy'), username: null }, tokens: { accessToken: 'legacy-access', refreshToken: null, codeVerifier: null, obtainedAt: null, expiresIn: null }, debugLog: null });
+  assert.deepEqual(state.tokens, { accessToken: 'legacy-access' });
+  assert.equal(state.auth.username, undefined); assert.equal(state.debugLog, undefined);
+});
+test('foreign profile markers and unknown registry metadata cannot use STS legacy migration', () => {
+  for (const product of ['bi', 'cc']) {
+    assert.throws(() => validateCompanies({ product, auth: {} }));
+    assert.throws(() => validateCompanies({ schemaVersion: 2, product: 'sts', activeCompany: null, companies: {}, pending: { product, auth: {} } }));
+  }
+  assert.throws(() => validateCompanies({ schemaVersion: 2, activeCompany: null, companies: {}, password: 'synthetic-secret' }));
+});
 test('failed rename preserves complete rotated-token recovery and old state', async t => {
   const store = await storeFor(t);
   const old = { auth: { orgName: 'synthetic', clientId: clientIdFor('synthetic') }, tokens: { refreshToken: 'old-synthetic-token' } };

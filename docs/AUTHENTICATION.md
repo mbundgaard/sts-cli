@@ -23,6 +23,40 @@ sts auth config --env custom --auth-url <idm-base-url> --sts-url <sts-base-url> 
 
 Configuration prepares the next login without replacing saved companies, changing the active company or clearing its tokens. Successful login saves that configuration and selects its company. Failed login leaves saved profiles and selection unchanged. `auth show` shows the prepared login configuration when present; `auth status` describes the active company's tokens.
 
+## Common authentication contract
+
+STS, BI and CC implement the same safety rules locally, without a shared package or
+cross-repository dependency. STS retains access tokens, environment presets and its
+client-ID-derived organization; BI/CC retain ID tokens and explicit organizations.
+
+- IDM requires HTTPS with certificate verification; HTTP is only for loopback tests.
+  No redirect following, TLS bypass or automatic retries. Local STS data transport
+  remains a separate policy; it does not permit plaintext remote authentication.
+- Authorization accepts 2xx or 302/303; sign-in, token exchange and refresh require 2xx.
+  Only Oracle-supplied cookies are retained, without rewriting client-ID padding.
+- Sign-in must not report failure. The callback must be `apiaccount://callback`
+  (optional trailing slash), without credentials, port, fragment or extra path,
+  and with exactly one nonblank authorization code. It is never navigated.
+- New login requires the product's primary token and a refresh token. Refresh may
+  retain the prior refresh token if no replacement is returned. Missing/unusable
+  expiry never discards rotated credentials or creates an assumed lifetime.
+- Stage/status diagnostics are sanitized; response bodies, callbacks, cookies,
+  password-reset tokens and underlying network/cookie error text remain private.
+- Auth timeouts default to 30 seconds; positive fractional values up to 300 are accepted.
+  Local status uses `no-tokens`, `unknown-expiry`, `expired`, `expiring-soon` (under
+  five minutes remaining), or `valid`; none proves acceptance by Oracle.
+- Imports reject foreign product markers, unknown fields (including passwords),
+  control characters and malformed saved PKCE verifiers. Product-specific legacy
+  migration never copies or relabels credentials from another CLI.
+
+**Compatibility change:** STS no longer synthesizes missing OAuth cookies or accepts
+new logins without a refresh token. These alignment changes are synthetic-tested,
+not newly verified against live STS deployments. If a deployment depends on either
+old behavior, stop and investigate rather than bypassing validation or retrying.
+Existing valid legacy tokens remain readable as described below. Saved remote HTTP
+IDM URLs or malformed state must be corrected in a protected copy before import;
+the CLI never silently rewrites URLs or resets rejected state.
+
 ## Login
 
 Login uses Oracle authorization-code + PKCE S256. Pass the password as a normal
@@ -45,7 +79,7 @@ If the user supplies credentials and authorizes login, use `--password` when req
 rather than refusing solely because a password was provided. Do not echo it,
 persist it, or include it in feedback.
 
-Command-line password arguments may be visible in shell history and process listings. `--username` overrides the prepared/saved user for a login. `--quiet` suppresses HTTP diagnostics; `--timeout <seconds>` changes the default 30-second timeout.
+Command-line password arguments may be visible in shell history and process listings. `--username` overrides the prepared/saved user for a login. `--quiet` suppresses HTTP diagnostics; `--timeout <seconds>` accepts positive fractional values up to 300 (default 30).
 
 A matching saved company, auth hostname and exact username with an access token that is not known to be expired skips authentication and reports the saved expiry information. It does not change active selection. No password is needed to report this duplicate. Unknown expiry is reported without claiming the token is valid. Known-expired tokens do not block a fresh login.
 
@@ -135,7 +169,14 @@ and local feedback state. There is no directory option. If you have a saved stat
 file elsewhere, use `auth restore --file <path>` to import it into this fixed
 per-user directory rather than logging in again.
 
-State schema version 2 stores `activeCompany`, a `companies` map and optional prepared login configuration. Each company has its own auth settings, tokens and `refreshAfter`. Existing single-company state is read as one active company without losing tokens; the migrated registry is persisted on the next mutation. Its first schedule is `obtainedAt + 24 hours`, or immediately due if that timestamp is absent. Incomplete legacy configuration is preserved for the next config/login operation.
+State schema version 2 stores `product: "sts"`, `activeCompany`, a `companies` map and optional prepared login configuration. Each company has its own auth settings, tokens and `refreshAfter`. Existing single-company state is read as one active company without losing tokens; the migrated registry is persisted on the next mutation. Its first schedule is `obtainedAt + 24 hours`, or immediately due if that timestamp is absent. Incomplete legacy configuration is preserved for the next config/login operation.
+
+Untagged legacy STS profiles/registries remain readable after strict field validation;
+the STS registry marker is added in memory and persisted on the next mutation, not a
+read-only command. Historical optional null fields become absent. Partial or
+non-refreshable legacy token sets retain their known fields without inventing a
+refresh token, verifier or expiry. This compatibility does not permit new incomplete
+login responses or BI/CC state, even with `--force`.
 
 Tokens are plaintext on disk; protect the directory with OS account permissions and disk encryption. Unix state files are created owner-only. State must not enter source control, public issue reports, or npm packages.
 
